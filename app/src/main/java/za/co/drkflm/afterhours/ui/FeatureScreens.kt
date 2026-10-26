@@ -79,7 +79,7 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     Column(Modifier.fillMaxSize()) {
         Header("The Grid","Nearby members") { IconButton({filters=true}){Icon(Icons.Default.Tune,"Filters")} }
         PullToRefreshBox(isRefreshing=loading,onRefresh={load()},modifier=Modifier.weight(1f)) {
-            LazyVerticalGridCompat(items) { profile -> ProfileTile(profile,{selected=profile},{vm.runTask{val next=!profile.bool("liked");ApiClient.request("likes/${profile.str("id")}",if(next)HttpMethod.Post else HttpMethod.Delete);load()}}) }
+            LazyVerticalGridCompat(items) { profile -> ProfileTile(profile){selected=profile} }
         }
     }
     if(filters) DiscoveryFilterSheet(radius,criteria,radiusMax,advanced,{filters=false}){newRadius,newCriteria->radius=newRadius;criteria=newCriteria;filters=false;load(newRadius,newCriteria)}
@@ -89,30 +89,18 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
 @Composable private fun LazyVerticalGridCompat(items:JsonArray,item:@Composable (JsonObject) -> Unit){LazyColumn(contentPadding=PaddingValues(horizontal=12.dp,vertical=4.dp)){items(items.chunked(2)){row->Row(Modifier.fillMaxWidth()){row.forEach{Box(Modifier.weight(1f).padding(6.dp)){item(it.jsonObject)}};if(row.size==1)Spacer(Modifier.weight(1f))}}}}
 private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Vers"->"↗";"Vers"->"↕";"Bottom / Vers"->"↘";"Bottom"->"↓";"Side"->"↔";else->""}
 @Composable private fun GridChip(text:String,symbol:String?=null){Row(Modifier.border(1.dp,Electric.copy(alpha=.8f),RoundedCornerShape(50)).background(Electric.copy(alpha=.13f),RoundedCornerShape(50)).padding(horizontal=7.dp,vertical=3.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){symbol?.takeIf{it.isNotBlank()}?.let{Text(it,color=Lavender,style=MaterialTheme.typography.labelSmall)};Text(text,color=Lavender,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold,maxLines=1)}}
-@Composable private fun ProfileTile(p:JsonObject,open:()->Unit,like:()->Unit){
+@Composable private fun ProfileTile(p:JsonObject,open:()->Unit){
     val shape=RoundedCornerShape(20.dp)
     val position=p.strOrNull("position").visibleProfileValue()?.takeUnless{it=="Prefer not to say"}
     val status=p.strOrNull("circumcisionStatus")?.takeIf{it=="Cut"||it=="Uncut"}
-    val tags=p.array("tags").mapNotNull{it.jsonPrimitive.contentOrNull.visibleProfileValue()}.take(3)
     Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(shape).background(Raised).border(if(p.bool("chatted"))2.5.dp else 1.dp,if(p.bool("chatted"))Electric else Color.White.copy(alpha=.12f),shape).clickable(onClick=open)){
         AsyncImage(authenticatedImageModel(p.strOrNull("photo")),null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color.Transparent,.46f to Color.Black.copy(alpha=.12f),1f to Color.Black.copy(alpha=.96f))))
         Column(Modifier.matchParentSize().padding(9.dp)){
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top){
-                Text(if(p.bool("online"))"Online" else "Offline",color=Color.White,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold,modifier=Modifier.background(Color.Black.copy(alpha=.58f),RoundedCornerShape(50)).padding(horizontal=8.dp,vertical=5.dp))
-                Spacer(Modifier.weight(1f))
-                IconButton(like,Modifier.size(38.dp).background(Color.Black.copy(alpha=.58f),CircleShape)){Icon(if(p.bool("liked"))Icons.Default.Favorite else Icons.Default.FavoriteBorder,"Like",tint=if(p.bool("liked"))HotPink else Color.White,modifier=Modifier.size(21.dp))}
-            }
             Spacer(Modifier.weight(1f))
-            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                Text("${p.str("displayName")}${p["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,color=Color.White,style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f,false))
-                if(p.bool("verified"))Icon(Icons.Default.Verified,"Verified",tint=Lavender,modifier=Modifier.size(17.dp))
-            }
+            Text("${p.str("displayName")}${p["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,color=Color.White,style=MaterialTheme.typography.titleMedium)
             if(position!=null||status!=null)Row(Modifier.padding(top=5.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){position?.let{GridChip(it,positionGlyph(it))};status?.let{GridChip(it,if(it=="Cut")"✂" else "○")}}
-            if(tags.isNotEmpty())Row(Modifier.padding(top=3.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){tags.forEach{Text("#$it",color=Lavender,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold,maxLines=1)}}
         }
-        val unread=p.int("unreadMessages")
-        if(unread>0)Text(if(unread>99)"99+"else unread.toString(),color=Color.White,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold,modifier=Modifier.align(Alignment.BottomEnd).padding(7.dp).background(Neon,RoundedCornerShape(50)).padding(horizontal=7.dp,vertical=5.dp))
     }
 }
 
