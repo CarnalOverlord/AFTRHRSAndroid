@@ -11,3 +11,4 @@ keystore/*.jks
 google-services.json
 app/google-services.json
 release/*.aab
+release/*.apk
