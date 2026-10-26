@@ -161,7 +161,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var newGroup by remember{mutableStateOf(false)}
     suspend fun load(){items=ApiClient.request(if(tab==0)"conversations" else "group-chats").jsonArray;vm.refreshUnread()}
     LaunchedEffect(tab){vm.runTask{load()}}
-    LaunchedEffect(vm.pendingConversation.value){vm.pendingConversation.value?.let{id->vm.runTask{val all=ApiClient.request("conversations").jsonArray;chat=all.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject}}}
+    LaunchedEffect(vm.pendingConversation.value){vm.pendingConversation.value?.let{id->vm.runTask{val all=ApiClient.request("conversations").jsonArray;chat=all.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject;vm.pendingConversation.value=null}}}
     LaunchedEffect(vm.pendingGroup.value){vm.pendingGroup.value?.let{id->tab=1;vm.runTask{items=ApiClient.request("group-chats").jsonArray;chat=items.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject;vm.pendingGroup.value=null}}}
     chat?.let{if(tab==0)DirectChat(vm,it){chat=null;vm.runTask{load()}}else GroupChatScreen(vm,it){chat=null;vm.runTask{load()}};return}
     Column{
