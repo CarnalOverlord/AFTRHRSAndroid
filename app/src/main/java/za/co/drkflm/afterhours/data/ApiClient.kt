@@ -4,8 +4,6 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.cookies.HttpCookies
-import io.ktor.client.plugins.cookies.AcceptAllCookiesStorage
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.*
@@ -15,7 +13,6 @@ import io.ktor.http.content.*
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.*
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
 import coil3.network.NetworkHeaders
 
 class ApiException(message: String) : Exception(message)
@@ -23,11 +20,10 @@ class ApiException(message: String) : Exception(message)
 object ApiClient {
     const val ORIGIN = "https://afterhours.drkflm.co.za"
     private const val BASE = "$ORIGIN/api/v1/"
-    private val imageCookies = ConcurrentHashMap<String, String>()
     val json = Json { ignoreUnknownKeys = true; isLenient = true; explicitNulls = false }
     private val client = HttpClient(OkHttp) {
+        engine { preconfigured = Network.http }
         install(ContentNegotiation) { json(json) }
-        install(HttpCookies) { storage = AcceptAllCookiesStorage() }
         install(HttpTimeout) { requestTimeoutMillis = 30_000; connectTimeoutMillis = 30_000 }
         expectSuccess = false
         defaultRequest {
@@ -41,7 +37,6 @@ object ApiClient {
             this.method = method
             if (body != null) { contentType(ContentType.Application.Json); setBody(body) }
         }
-        captureCookies(response.headers.getAll(HttpHeaders.SetCookie).orEmpty())
         return unwrap(response.status.value, response.body<String>())
     }
 
@@ -53,20 +48,11 @@ object ApiClient {
                 append(HttpHeaders.ContentDisposition, "filename=\"photo.jpg\"")
             })
         })
-        captureCookies(response.headers.getAll(HttpHeaders.SetCookie).orEmpty())
         return unwrap(response.status.value, response.body<String>())
     }
 
-    private fun captureCookies(values: List<String>) {
-        values.forEach { header ->
-            val pair = header.substringBefore(';')
-            val split = pair.indexOf('=')
-            if (split > 0) imageCookies[pair.substring(0, split)] = pair.substring(split + 1)
-        }
-    }
-
     fun imageHeaders(): NetworkHeaders = NetworkHeaders.Builder().apply {
-        if (imageCookies.isNotEmpty()) set("Cookie", imageCookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
+        Network.cookieHeader().takeIf { it.isNotBlank() }?.let { set("Cookie", it) }
         set("X-AFTRHRS-Client", "AFTRHRS-Native-Android/1.0")
     }.build()
 
@@ -98,4 +84,5 @@ fun JsonObject.str(key: String) = this[key]?.jsonPrimitive?.contentOrNull.orEmpt
 fun JsonObject.strOrNull(key: String) = this[key]?.jsonPrimitive?.contentOrNull
 fun JsonObject.bool(key: String) = this[key]?.jsonPrimitive?.booleanOrNull ?: false
 fun JsonObject.int(key: String) = this[key]?.jsonPrimitive?.intOrNull ?: 0
-fun JsonObject.array(key: String) = this[key]?.jsonArray ?: JsonArray(emptyList())
+fun JsonObject.array(key: String) = this[key] as? JsonArray ?: JsonArray(emptyList())
+fun JsonObject.objectOrNull(key: String) = this[key] as? JsonObject
