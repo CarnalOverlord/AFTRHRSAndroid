@@ -19,8 +19,8 @@ android {
         applicationId = "za.co.drkflm.afterhours"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.1.12"
+        versionCode = 23
+        versionName = "1.1.13"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }

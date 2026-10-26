@@ -93,7 +93,6 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
     val shape=RoundedCornerShape(20.dp)
     val position=p.strOrNull("position").visibleProfileValue()?.takeUnless{it=="Prefer not to say"}
     val status=p.strOrNull("circumcisionStatus")?.takeIf{it=="Cut"||it=="Uncut"}
-    val pronouns=p.strOrNull("pronouns").visibleProfileValue()?.takeUnless{it=="Prefer not to say"}
     val tags=p.array("tags").mapNotNull{it.jsonPrimitive.contentOrNull.visibleProfileValue()}.take(3)
     Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(shape).background(Raised).border(if(p.bool("chatted"))2.5.dp else 1.dp,if(p.bool("chatted"))Electric else Color.White.copy(alpha=.12f),shape).clickable(onClick=open)){
         AsyncImage(authenticatedImageModel(p.strOrNull("photo")),null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
@@ -110,7 +109,6 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
                 if(p.bool("verified"))Icon(Icons.Default.Verified,"Verified",tint=Lavender,modifier=Modifier.size(17.dp))
             }
             if(position!=null||status!=null)Row(Modifier.padding(top=5.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){position?.let{GridChip(it,positionGlyph(it))};status?.let{GridChip(it,if(it=="Cut")"✂" else "○")}}
-            pronouns?.let{Text(it,color=Muted,style=MaterialTheme.typography.labelSmall,maxLines=1,modifier=Modifier.padding(top=4.dp))}
             if(tags.isNotEmpty())Row(Modifier.padding(top=3.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){tags.forEach{Text("#$it",color=Lavender,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold,maxLines=1)}}
         }
         val unread=p.int("unreadMessages")
