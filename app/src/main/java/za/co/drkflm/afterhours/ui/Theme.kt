@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -36,5 +37,9 @@ fun Modifier.glassCard(padding: Int = 16) = this
 }
 
 @Composable fun NightBackground(content: @Composable BoxScope.() -> Unit) {
-    Box(Modifier.fillMaxSize().background(Void).background(Brush.radialGradient(listOf(Electric.copy(alpha=.2f), Color.Transparent), radius=1100f)), content = content)
+    CompositionLocalProvider(LocalContentColor provides Color.White) {
+        Box(Modifier.fillMaxSize().background(Void).background(Brush.radialGradient(listOf(Electric.copy(alpha=.2f), Color.Transparent), radius=1100f))) {
+            CompositionLocalProvider(LocalContentColor provides Color.White) { content() }
+        }
+    }
 }

@@ -15,12 +15,15 @@ import io.ktor.http.content.*
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.*
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import coil3.network.NetworkHeaders
 
 class ApiException(message: String) : Exception(message)
 
 object ApiClient {
     const val ORIGIN = "https://afterhours.drkflm.co.za"
     private const val BASE = "$ORIGIN/api/v1/"
+    private val imageCookies = ConcurrentHashMap<String, String>()
     val json = Json { ignoreUnknownKeys = true; isLenient = true; explicitNulls = false }
     private val client = HttpClient(OkHttp) {
         install(ContentNegotiation) { json(json) }
@@ -38,6 +41,7 @@ object ApiClient {
             this.method = method
             if (body != null) { contentType(ContentType.Application.Json); setBody(body) }
         }
+        captureCookies(response.headers.getAll(HttpHeaders.SetCookie).orEmpty())
         return unwrap(response.status.value, response.body<String>())
     }
 
@@ -49,8 +53,22 @@ object ApiClient {
                 append(HttpHeaders.ContentDisposition, "filename=\"photo.jpg\"")
             })
         })
+        captureCookies(response.headers.getAll(HttpHeaders.SetCookie).orEmpty())
         return unwrap(response.status.value, response.body<String>())
     }
+
+    private fun captureCookies(values: List<String>) {
+        values.forEach { header ->
+            val pair = header.substringBefore(';')
+            val split = pair.indexOf('=')
+            if (split > 0) imageCookies[pair.substring(0, split)] = pair.substring(split + 1)
+        }
+    }
+
+    fun imageHeaders(): NetworkHeaders = NetworkHeaders.Builder().apply {
+        if (imageCookies.isNotEmpty()) set("Cookie", imageCookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
+        set("X-AFTRHRS-Client", "AFTRHRS-Native-Android/1.0")
+    }.build()
 
     private fun unwrap(status: Int, raw: String): JsonElement {
         val envelope = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrElse {
