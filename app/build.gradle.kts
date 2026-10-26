@@ -18,8 +18,8 @@ android {
         applicationId = "za.co.drkflm.afterhours"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.1.5"
+        versionCode = 16
+        versionName = "1.1.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
@@ -30,6 +30,10 @@ android {
             storePassword = signing.getProperty("storePassword")
             keyAlias = signing.getProperty("keyAlias")
             keyPassword = signing.getProperty("keyPassword")
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
         }
     }
     buildTypes {
