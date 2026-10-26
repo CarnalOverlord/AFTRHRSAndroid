@@ -8,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import za.co.drkflm.afterhours.data.*
+import za.co.drkflm.afterhours.push.PushNotifications
 
 enum class SessionPhase { Loading, SignedOut, SignedIn }
 
@@ -26,17 +27,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init { restore() }
     fun restore() = viewModelScope.launch {
-        runCatching { refresh() }.onSuccess { phase.value = SessionPhase.SignedIn; refreshUnread() }
+        runCatching { refresh() }.onSuccess { phase.value = SessionPhase.SignedIn; refreshUnread(); runCatching { PushNotifications.register() } }
             .onFailure { phase.value = SessionPhase.SignedOut }
     }
     suspend fun refresh() { user.value = ApiClient.request("auth/me").jsonObject }
     fun login(email: String, password: String) = runTask {
-        ApiClient.request("auth/login", HttpMethod.Post, obj("email" to email, "password" to password)); refresh(); phase.value = SessionPhase.SignedIn; refreshUnread()
+        ApiClient.request("auth/login", HttpMethod.Post, obj("email" to email, "password" to password)); refresh(); phase.value = SessionPhase.SignedIn; refreshUnread(); runCatching { PushNotifications.register() }
     }
     fun register(email: String, password: String, name: String, birthDate: String, consent: Boolean) = runTask {
-        ApiClient.request("auth/register", HttpMethod.Post, obj("email" to email, "password" to password, "displayName" to name, "dateOfBirth" to birthDate, "consent" to consent)); refresh(); phase.value = SessionPhase.SignedIn
+        ApiClient.request("auth/register", HttpMethod.Post, obj("email" to email, "password" to password, "displayName" to name, "dateOfBirth" to birthDate, "consent" to consent)); refresh(); phase.value = SessionPhase.SignedIn; runCatching { PushNotifications.register() }
     }
-    fun logout() = runTask { runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
+    fun logout() = runTask { runCatching { PushNotifications.unregister() }; runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
+    fun routePush(conversationId:String?,groupId:String?){
+        when { !conversationId.isNullOrBlank() -> pendingConversation.value=conversationId; !groupId.isNullOrBlank() -> pendingGroup.value=groupId }
+    }
     suspend fun refreshUnread() {
         runCatching {
             val direct = viewModelScope.async { ApiClient.request("conversations").jsonArray }

@@ -5,6 +5,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.gms.google-services")
 }
 
 val signingFile = rootProject.file("release-signing.properties")
@@ -72,6 +73,8 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.5.0")
     implementation("androidx.camera:camera-view:1.5.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
+    implementation("com.google.firebase:firebase-messaging")
     implementation("io.ktor:ktor-client-core:3.2.3")
     implementation("io.ktor:ktor-client-okhttp:3.2.3")
     implementation("io.ktor:ktor-client-content-negotiation:3.2.3")
