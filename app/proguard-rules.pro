@@ -1,0 +1,3 @@
+-keepattributes *Annotation*
+-keep class za.co.drkflm.afterhours.model.** { *; }
+-dontwarn org.conscrypt.**

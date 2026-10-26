@@ -1,0 +1,4 @@
+storeFile=keystore/aftrhrs-upload.jks
+storePassword=replace-me
+keyAlias=aftrhrs-upload
+keyPassword=replace-me
