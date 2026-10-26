@@ -19,12 +19,27 @@
         </provider>
         <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-            <intent-filter>
                 <action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="aftrhrs" />
             </intent-filter>
         </activity>
+        <activity-alias android:name=".launcher.DefaultIcon" android:targetActivity=".MainActivity" android:enabled="true" android:exported="true" android:icon="@drawable/app_icon_default" android:roundIcon="@drawable/app_icon_default" android:label="AFTRHRS">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".launcher.EclipseIcon" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_eclipse" android:roundIcon="@drawable/app_icon_eclipse" android:label="AFTRHRS">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".launcher.MidnightIcon" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_midnight" android:roundIcon="@drawable/app_icon_midnight" android:label="AFTRHRS">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".launcher.AuroraIcon" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_aurora" android:roundIcon="@drawable/app_icon_aurora" android:label="AFTRHRS">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".launcher.PrismIcon" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_prism" android:roundIcon="@drawable/app_icon_prism" android:label="AFTRHRS">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".launcher.OrbitIcon" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_orbit" android:roundIcon="@drawable/app_icon_orbit" android:label="AFTRHRS">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity-alias>
     </application>
 </manifest>
