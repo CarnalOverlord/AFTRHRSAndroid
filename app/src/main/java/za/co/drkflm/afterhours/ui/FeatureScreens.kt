@@ -58,6 +58,8 @@ import android.text.format.DateUtils
 private fun String?.visibleProfileValue():String? = this?.trim()?.takeIf {
     it.isNotEmpty() && it.lowercase() !in setOf("unavailable","hidden","unknown","not set","n/a","null","off")
 }
+private val chatUrlPattern=Regex("https?://[^\\s<>\\\"']+",RegexOption.IGNORE_CASE)
+private fun chatLink(body:String):String?=chatUrlPattern.find(body)?.value?.trimEnd(*"),.!?;:".toCharArray())?.takeIf{link->runCatching{Uri.parse(link)}.getOrNull()?.let{it.scheme in setOf("http","https")&&!it.host.isNullOrBlank()}==true}
 
 @Composable private fun Header(title:String,subtitle:String?=null,action:(@Composable () -> Unit)?=null){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(title,style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);subtitle?.let{Text(it,color=Muted)}};action?.invoke()}}
 @Composable private fun authenticatedImageModel(url:String?):ImageRequest { val context=LocalContext.current; return ImageRequest.Builder(context).data(ApiClient.mediaUrl(url)).httpHeaders(ApiClient.imageHeaders()).build() }
@@ -216,7 +218,31 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it){openedGallery=null}}
 }
-@Composable private fun MessageBubble(m:JsonObject,me:String?,openGallery:(String)->Unit={}){val mine=m.str("senderId")==me;Row(Modifier.fillMaxWidth().padding(vertical=4.dp),horizontalArrangement=if(mine)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=300.dp).background(if(mine)Electric.copy(alpha=.5f)else Raised,RoundedCornerShape(18.dp)).padding(12.dp)){val body=m.str("body");val kind=m.str("kind").uppercase();when{m.bool("viewOnce")->Text(if(mine)"View-once media sent" else "Tap to open view-once media",color=Lavender,fontWeight=FontWeight.SemiBold);body.startsWith("LOCATION:")-> {Text("📍 Shared location",fontWeight=FontWeight.Bold,color=Color.White);Text("Tap to open in Maps",color=Muted)};kind=="IMAGE"||kind=="GIF"->AsyncImage(authenticatedImageModel(body),"Chat image",Modifier.fillMaxWidth().heightIn(min=120.dp,max=320.dp).clip(RoundedCornerShape(12.dp)),contentScale=ContentScale.Fit);kind=="VIDEO"->Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PlayCircle,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Video received",color=Color.White)};kind=="GALLERY"||body.startsWith("GALLERY_SHARE:")->Column(Modifier.clickable{body.substringAfter("GALLERY_SHARE:").takeIf{it.isNotBlank()}?.let(openGallery)}){Text("Private gallery shared",color=Color.White,fontWeight=FontWeight.SemiBold);Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)};else->Text(body,color=Color.White)}}}}
+@Composable private fun MessageBubble(m:JsonObject,me:String?,openGallery:(String)->Unit={}){val mine=m.str("senderId")==me;Row(Modifier.fillMaxWidth().padding(vertical=4.dp),horizontalArrangement=if(mine)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=300.dp).background(if(mine)Electric.copy(alpha=.5f)else Raised,RoundedCornerShape(18.dp)).padding(12.dp)){val body=m.str("body");val kind=m.str("kind").uppercase();when{m.bool("viewOnce")->Text(if(mine)"View-once media sent" else "Tap to open view-once media",color=Lavender,fontWeight=FontWeight.SemiBold);body.startsWith("LOCATION:")-> {Text("📍 Shared location",fontWeight=FontWeight.Bold,color=Color.White);Text("Tap to open in Maps",color=Muted)};kind=="IMAGE"||kind=="GIF"->AsyncImage(authenticatedImageModel(body),"Chat image",Modifier.fillMaxWidth().heightIn(min=120.dp,max=320.dp).clip(RoundedCornerShape(12.dp)),contentScale=ContentScale.Fit);kind=="VIDEO"->Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PlayCircle,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Video received",color=Color.White)};kind=="GALLERY"||body.startsWith("GALLERY_SHARE:")->Column(Modifier.clickable{body.substringAfter("GALLERY_SHARE:").takeIf{it.isNotBlank()}?.let(openGallery)}){Text("Private gallery shared",color=Color.White,fontWeight=FontWeight.SemiBold);Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)};else->ChatLinkPreview(body)}}}}
+
+@Composable private fun ChatLinkPreview(body:String){
+    val link=remember(body){chatLink(body)}
+    if(link==null){Text(body,color=Color.White);return}
+    val context=LocalContext.current
+    var preview by remember(link){mutableStateOf<JsonObject?>(null)}
+    LaunchedEffect(link){preview=runCatching{ApiClient.linkPreview(link)}.getOrNull()}
+    val parsed=remember(link){Uri.parse(link)}
+    val hostname=parsed.host?.removePrefix("www.")?:link
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Text(body,color=Color.White)
+        Row(Modifier.fillMaxWidth().border(1.dp,Lavender.copy(alpha=.4f),RoundedCornerShape(12.dp)).background(Panel.copy(alpha=.55f),RoundedCornerShape(12.dp)).clickable{runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,parsed))}}.padding(10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            val image=preview?.strOrNull("image")
+            if(image!=null)AsyncImage(image,"",Modifier.size(68.dp).clip(RoundedCornerShape(8.dp)),contentScale=ContentScale.Crop)
+            else Icon(Icons.Default.Link,null,tint=Lavender,modifier=Modifier.size(28.dp))
+            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                Text(preview?.strOrNull("title")?:hostname,color=Color.White,fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis)
+                preview?.strOrNull("description")?.takeIf{it.isNotBlank()}?.let{Text(it,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=3,overflow=TextOverflow.Ellipsis)}
+                Text(link,color=Muted,style=MaterialTheme.typography.labelSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
+                Text("Open in browser ↗",color=Lavender,style=MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
 
 @Composable private fun SharedGalleryViewer(gallery:JsonObject,dismiss:()->Unit){ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=800.dp).padding(horizontal=18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(gallery.strOrNull("title")?:"Private gallery",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);val photos=gallery.array("photos");if(photos.isEmpty())Box(Modifier.fillMaxWidth().height(240.dp),contentAlignment=Alignment.Center){Text("This gallery has no photos.",color=Muted)}else LazyColumn(Modifier.heightIn(max=620.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(photos.size){index->AsyncImage(authenticatedImageModel(photos[index].jsonObject.strOrNull("url")),"Gallery photo",Modifier.fillMaxWidth().heightIn(min=260.dp,max=560.dp).clip(RoundedCornerShape(18.dp)).background(Raised),contentScale=ContentScale.Fit)}};OutlinedButton(dismiss,Modifier.fillMaxWidth()){Text("Done")};Spacer(Modifier.height(20.dp))}}}
 

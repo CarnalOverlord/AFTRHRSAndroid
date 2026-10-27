@@ -40,6 +40,14 @@ object ApiClient {
         return unwrap(response.status.value, response.body<String>())
     }
 
+    suspend fun linkPreview(url: String): JsonObject? {
+        val response = client.get("$ORIGIN/api/link-preview") { parameter("url", url) }
+        if (response.status.value !in 200..299) return null
+        val raw = response.body<String>()
+        if (raw.isBlank() || raw == "null") return null
+        return runCatching { json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+    }
+
     suspend fun upload(path: String, file: File, field: String = "image", fields: Map<String, String> = emptyMap()): JsonElement {
         val response = client.submitFormWithBinaryData(BASE + path, formData {
             fields.forEach { (key, value) -> append(key, value) }
