@@ -148,7 +148,22 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
         p?.let{data->
             val profile=data.objectOrNull("profile")?:return@let
             val photos=data.array("photos")
-            if(photos.isNotEmpty())AsyncImage(authenticatedImageModel(photos.first().jsonObject.str("url")),null,Modifier.fillMaxWidth().height(430.dp),contentScale=ContentScale.Crop)
+            if(photos.isNotEmpty()){
+                val pagerState=androidx.compose.foundation.pager.rememberPagerState(pageCount={photos.size})
+                Box(Modifier.fillMaxWidth().height(430.dp)){
+                    androidx.compose.foundation.pager.HorizontalPager(state=pagerState,modifier=Modifier.fillMaxSize()) { page ->
+                        AsyncImage(authenticatedImageModel(photos[page].jsonObject.str("url")),null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
+                    }
+                    if(photos.size>1){
+                        Row(Modifier.align(Alignment.BottomCenter).padding(bottom=12.dp).background(Color.Black.copy(alpha=.6f),RoundedCornerShape(20.dp)).padding(horizontal=12.dp,vertical=7.dp),horizontalArrangement=Arrangement.spacedBy(7.dp),verticalAlignment=Alignment.CenterVertically){
+                            photos.indices.forEach { index ->
+                                Box(Modifier.size(if(index==pagerState.currentPage)8.dp else 6.dp).background(if(index==pagerState.currentPage)Color.White else Color.White.copy(alpha=.4f),CircleShape))
+                            }
+                            Text("${pagerState.currentPage+1}/${photos.size}",color=Color.White,style=MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
             Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
                 Text("${profile.str("displayName")}${data["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White)
                 val location=data.objectOrNull("location")
