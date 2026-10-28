@@ -5,7 +5,7 @@ workflows:
     max_build_duration: 60
     environment:
       android_signing:
-        - aftrhrs_upload
+        - aftrhrs-upload
       vars:
         PACKAGE_NAME: "za.co.aftrhrs"
       java: 17
