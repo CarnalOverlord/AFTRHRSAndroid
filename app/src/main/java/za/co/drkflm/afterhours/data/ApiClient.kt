@@ -15,7 +15,6 @@ import kotlinx.serialization.json.*
 import java.io.File
 import okhttp3.MultipartBody
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import coil3.network.NetworkHeaders
@@ -79,7 +78,7 @@ object ApiClient {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val request = Request.Builder()
                 .url(BASE + "conversations/$conversationId/messages/$messageId/open")
-                .post(ByteArray(0).toRequestBody(null))
+                .get()
                 .header("X-AFTRHRS-Client", "AFTRHRS-Native-Android/1.0")
                 .header("Cache-Control", "no-store")
                 .build()
