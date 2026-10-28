@@ -38,7 +38,7 @@ android {
         }
     }
     buildTypes {
-        debug { applicationIdSuffix = ".debug" }
+        debug { /* Use the registered Firebase Android application ID for local testing. */ }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
