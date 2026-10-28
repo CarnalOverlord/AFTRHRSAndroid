@@ -225,7 +225,12 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     if(link==null){Text(body,color=Color.White);return}
     val context=LocalContext.current
     var preview by remember(link){mutableStateOf<JsonObject?>(null)}
-    LaunchedEffect(link){preview=runCatching{ApiClient.linkPreview(link)}.getOrNull()}
+    var previewLoading by remember(link){mutableStateOf(true)}
+    LaunchedEffect(link){
+        previewLoading=true
+        preview=runCatching{ApiClient.linkPreview(link)}.getOrNull()
+        previewLoading=false
+    }
     val parsed=remember(link){Uri.parse(link)}
     val hostname=parsed.host?.removePrefix("www.")?:link
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -237,6 +242,8 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
                 Text(preview?.strOrNull("title")?:hostname,color=Color.White,fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis)
                 preview?.strOrNull("description")?.takeIf{it.isNotBlank()}?.let{Text(it,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=3,overflow=TextOverflow.Ellipsis)}
+                if(previewLoading) LinearProgressIndicator(Modifier.fillMaxWidth(),color=Lavender)
+                else if(preview==null) Text("Preview unavailable",color=Muted,style=MaterialTheme.typography.labelSmall)
                 Text(link,color=Muted,style=MaterialTheme.typography.labelSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
                 Text("Open in browser ↗",color=Lavender,style=MaterialTheme.typography.labelSmall)
             }
