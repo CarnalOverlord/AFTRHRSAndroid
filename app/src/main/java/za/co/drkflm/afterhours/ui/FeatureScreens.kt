@@ -138,7 +138,7 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
             Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
                 Text("${profile.str("displayName")}${data["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White)
                 val location=data.objectOrNull("location")
-                val metadata=listOf(location?.strOrNull("distance").visibleProfileValue(),location?.strOrNull("city").visibleProfileValue(),profile.strOrNull("presenceLabel").visibleProfileValue()).filterNotNull()
+                val metadata=listOf(location?.strOrNull("distance").visibleProfileValue(),profile.strOrNull("presenceLabel").visibleProfileValue()).filterNotNull()
                 if(metadata.isNotEmpty())Text(metadata.joinToString(" · "),color=Lavender)
                 Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
                     ElectricButton({if(!liking){liking=true;scope.launch{try{val wasLiked=liked;ApiClient.request("likes/$id",if(wasLiked)HttpMethod.Delete else HttpMethod.Post);liked=!wasLiked}catch(e:Exception){vm.error.value=e.message?:"Could not update this like"}finally{liking=false}}}},Modifier.weight(1f)){Icon(if(liked)Icons.Default.Favorite else Icons.Default.FavoriteBorder,null);Text(if(liking)" Updating..." else if(liked)" Unlike" else " Like")}
