@@ -82,6 +82,9 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     var criteria by remember { mutableStateOf(DiscoveryFilters()) }
     fun load(targetRadius:Float=radius,targetCriteria:DiscoveryFilters=criteria) { vm.runTask { loading=true;try{items=ApiClient.request(discoveryPath(targetRadius.toInt(),targetCriteria,advanced)).jsonObject.array("items")}finally{loading=false} } }
     LaunchedEffect(Unit) { vm.runTask { val config=ApiClient.request("discovery/filters").jsonObject;radiusMax=config.int("radiusMax").coerceAtLeast(25);advanced=config.bool("advanced");radius=(config.objectOrNull("preferences")?.get("radiusKm")?.jsonPrimitive?.floatOrNull?:25f).let { if (advanced && it == 0f) 0f else it.coerceIn(1f,radiusMax.toFloat()) };loading=true;try{items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items")}finally{loading=false} } }
+    val gridRevision = Presence.revision.intValue
+    LaunchedEffect(gridRevision) { if(gridRevision>0 && !loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } }
+    LaunchedEffect(Unit) { while(true) { delay(30_000); if(!loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } } }
     selected?.let { ProfileScreen(vm,it.str("id")){selected=null}; return }
     Column(Modifier.fillMaxSize()) {
         Header("The Grid","Nearby members") { IconButton({filters=true}){Icon(Icons.Default.Tune,"Filters")} }
@@ -109,6 +112,7 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
         Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(43.dp).clip(CircleShape).background(Color(0xBB333039)).clickable(enabled=!liking){
             liking=true;scope.launch {try {ApiClient.request("likes/${p.str("id")}",if(liked)HttpMethod.Delete else HttpMethod.Post);liked=!liked}catch(_:Exception){}finally{liking=false}}
         },contentAlignment=Alignment.Center){Icon(if(liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,"Like ${p.str("displayName")}",tint=if(liked) Color(0xFFFF29B7) else Color.White,modifier=Modifier.size(26.dp))}
+        if(p.bool("online")) Row(Modifier.align(Alignment.TopStart).padding(9.dp).background(Color(0xCC14221B),RoundedCornerShape(12.dp)).padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(8.dp).background(Color(0xFF43D17A),CircleShape));Text("Online",color=Color.White,style=MaterialTheme.typography.labelSmall)}
         Column(Modifier.matchParentSize().padding(9.dp)){
             Spacer(Modifier.weight(1f))
             Text("${p.str("displayName")}${p["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,color=Color.White,style=MaterialTheme.typography.titleMedium)
@@ -163,6 +167,9 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var newGroup by remember{mutableStateOf(false)}
     suspend fun load(){items=ApiClient.request(if(tab==0)"conversations" else "group-chats").jsonArray;vm.refreshUnread()}
     LaunchedEffect(tab){vm.runTask{load()}}
+    val inboxRevision = Presence.revision.intValue
+    LaunchedEffect(tab,inboxRevision) { if(inboxRevision>0) runCatching { load() } }
+    LaunchedEffect(tab) { while(true) { delay(30_000); runCatching { load() } } }
     LaunchedEffect(vm.pendingConversation.value){vm.pendingConversation.value?.let{id->vm.runTask{val all=ApiClient.request("conversations").jsonArray;chat=all.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject;vm.pendingConversation.value=null}}}
     LaunchedEffect(vm.pendingGroup.value){vm.pendingGroup.value?.let{id->tab=1;vm.runTask{items=ApiClient.request("group-chats").jsonArray;chat=items.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject;vm.pendingGroup.value=null}}}
     chat?.let{if(tab==0)DirectChat(vm,it){chat=null;vm.runTask{load()}}else GroupChatScreen(vm,it){chat=null;vm.runTask{load()}};return}
@@ -200,7 +207,10 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     BackHandler(onBack=back)
     val context=LocalContext.current
     val id=c.str("id")
-    val other=c.objectOrNull("other")
+    var other by remember(c.str("id")) { mutableStateOf(c.objectOrNull("other")) }
+    val chatRevision = Presence.revision.intValue
+    LaunchedEffect(id,chatRevision) { if(chatRevision>0) runCatching { other=ApiClient.request("conversations").jsonArray.firstOrNull { it.jsonObject.str("id")==id }?.jsonObject?.objectOrNull("other") ?: other } }
+    LaunchedEffect(id) { while(true) { delay(30_000); runCatching { other=ApiClient.request("conversations").jsonArray.firstOrNull { it.jsonObject.str("id")==id }?.jsonObject?.objectOrNull("other") ?: other } } }
     var messages by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))}
     var viewedProfile by remember{mutableStateOf<String?>(null)}
     var text by remember{mutableStateOf("")}
