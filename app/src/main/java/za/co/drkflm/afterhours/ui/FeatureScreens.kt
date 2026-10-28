@@ -462,12 +462,109 @@ private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:
 @Composable private fun PrivateGalleryPicker(vm:AppViewModel,dismiss:()->Unit,select:(JsonObject)->Unit){var galleries by remember{mutableStateOf<JsonArray?>(null)};LaunchedEffect(Unit){vm.runTask{val response=ApiClient.request("private-galleries");galleries=if(response is JsonArray)response else response.jsonObject.array("items")}};AlertDialog(dismiss,title={Text("Share a private gallery")},text={LazyColumn(Modifier.heightIn(max=420.dp)){val items=galleries;if(items==null)item{CircularProgressIndicator()}else if(items.isEmpty())item{Text("You do not have a private gallery to share yet.",color=Muted)}else items(items.size){index->val gallery=items[index].jsonObject;ListItem(headlineContent={Text(gallery.strOrNull("title")?:gallery.strOrNull("name")?:"Private gallery")},supportingContent={Text("${gallery.array("photos").size} photos")},leadingContent={Icon(Icons.Default.Collections,null,tint=Lavender)},modifier=Modifier.clickable{select(gallery)})}}},confirmButton={TextButton(dismiss){Text("Cancel")}})}
 private suspend fun currentLocation(context:android.content.Context):Pair<Double,Double> = suspendCancellableCoroutine{cont->val client=LocationServices.getFusedLocationProviderClient(context);try{client.lastLocation.addOnSuccessListener{loc->if(loc!=null)cont.resume(loc.latitude to loc.longitude)else cont.resumeWithException(Exception("Current location is unavailable. Try again outdoors."))}.addOnFailureListener{cont.resumeWithException(it)}}catch(e:SecurityException){cont.resumeWithException(e)}}
 
+private val groupBubblePalette = listOf(
+    Color(0xFF5A327A), Color(0xFF285C68), Color(0xFF704055),
+    Color(0xFF4A5D35), Color(0xFF68502D), Color(0xFF345A88),
+    Color(0xFF714B79), Color(0xFF38665B), Color(0xFF79513F),
+    Color(0xFF46517B), Color(0xFF5B6340), Color(0xFF70405F)
+)
+
 @Composable private fun GroupChatScreen(vm:AppViewModel,g:JsonObject,back:()->Unit){
-    BackHandler(onBack=back);val id=g.str("id")
-    var messages by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))};var text by remember{mutableStateOf("")};var openedGallery by remember{mutableStateOf<JsonObject?>(null)};var showGroupMenu by remember{mutableStateOf(false)};var confirmLeave by remember{mutableStateOf(false)};var leaving by remember{mutableStateOf(false)}
-    val listState=rememberLazyListState();suspend fun load(){messages=ApiClient.request("group-chats/$id/messages").jsonArray}
-    LaunchedEffect(Unit){if(g.str("status")=="ACCEPTED")vm.runTask{load()}};LaunchedEffect(messages.size){if(messages.isNotEmpty())listState.scrollToItem(messages.lastIndex)}
-    Column(Modifier.fillMaxSize().imePadding()){Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically){IconButton(back){Icon(Icons.Default.ArrowBack,"Back")};Text(g.str("title"),Modifier.weight(1f),color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleLarge,maxLines=1);Box{IconButton({showGroupMenu=true}){Icon(Icons.Default.Groups,"Group options",tint=Lavender)};DropdownMenu(expanded=showGroupMenu,onDismissRequest={showGroupMenu=false}){DropdownMenuItem(text={Text("Leave group",color=Color(0xFFFF777E))},onClick={showGroupMenu=false;confirmLeave=true})}}};if(g.str("status")=="PENDING")Row(Modifier.padding(12.dp).glassCard()){ElectricButton({vm.runTask{ApiClient.request("group-chats/$id/respond",HttpMethod.Post,obj("action" to "accept"));back()}},Modifier.weight(1f)){Text("Accept")};Spacer(Modifier.width(8.dp));OutlinedButton({vm.runTask{ApiClient.request("group-chats/$id/respond",HttpMethod.Post,obj("action" to "decline"));back()}},Modifier.weight(1f)){Text("Decline")}}else{LazyColumn(Modifier.weight(1f),state=listState,contentPadding=PaddingValues(12.dp)){items(messages.size){i->val m=messages[i].jsonObject;Text(m.str("senderName"),color=Lavender,style=MaterialTheme.typography.labelSmall);MessageBubble(m,vm.user.value?.str("id")){galleryId->vm.runTask{openedGallery=ApiClient.request("private-galleries/$galleryId/view").jsonObject}}}};Row(Modifier.padding(8.dp)){OutlinedTextField(text,{text=it},Modifier.weight(1f));IconButton({val body=text.trim();if(body.isNotBlank()){text="";vm.runTask{ApiClient.request("group-chats/$id/messages",HttpMethod.Post,obj("body" to body));load()}}}){Icon(Icons.Default.Send,"Send")}}}}
+    BackHandler(onBack=back)
+    val id=g.str("id")
+    val me=vm.user.value?.str("id")
+    var messages by remember(id){mutableStateOf<JsonArray>(JsonArray(emptyList()))}
+    var text by remember(id){mutableStateOf("")}
+    var replyingTo by remember(id){mutableStateOf<JsonObject?>(null)}
+    var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
+    var showGroupMenu by remember{mutableStateOf(false)}
+    var confirmLeave by remember{mutableStateOf(false)}
+    var leaving by remember{mutableStateOf(false)}
+    val listState=rememberLazyListState()
+    suspend fun load(){messages=ApiClient.request("group-chats/$id/messages").jsonArray}
+    LaunchedEffect(id){if(g.str("status")=="ACCEPTED")vm.runTask{load()}}
+    LaunchedEffect(messages.size){if(messages.isNotEmpty())listState.scrollToItem(messages.lastIndex)}
+    val participants=remember(messages,g){
+        (g.array("members").map{it.jsonObject.str("id")}+
+            messages.map{it.jsonObject.str("senderId")}).filter{it.isNotBlank()}.distinct().sorted()
+    }
+    val memberColors=remember(participants){
+        participants.mapIndexed{index,userId->userId to groupBubblePalette[index%groupBubblePalette.size]}.toMap()
+    }
+    Column(Modifier.fillMaxSize().imePadding()){
+        Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically){
+            IconButton(back){Icon(Icons.Default.ArrowBack,"Back")}
+            Text(g.str("title"),Modifier.weight(1f),color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleLarge,maxLines=1)
+            Box{
+                IconButton({showGroupMenu=true}){Icon(Icons.Default.Groups,"Group options",tint=Lavender)}
+                DropdownMenu(expanded=showGroupMenu,onDismissRequest={showGroupMenu=false}){
+                    DropdownMenuItem(text={Text("Leave group",color=Color(0xFFFF777E))},onClick={showGroupMenu=false;confirmLeave=true})
+                }
+            }
+        }
+        if(g.str("status")=="PENDING"){
+            Row(Modifier.padding(12.dp).glassCard()){
+                ElectricButton({vm.runTask{ApiClient.request("group-chats/$id/respond",HttpMethod.Post,obj("action" to "accept"));back()}},Modifier.weight(1f)){Text("Accept")}
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton({vm.runTask{ApiClient.request("group-chats/$id/respond",HttpMethod.Post,obj("action" to "decline"));back()}},Modifier.weight(1f)){Text("Decline")}
+            }
+        }else{
+            LazyColumn(Modifier.weight(1f),state=listState,contentPadding=PaddingValues(12.dp)){
+                items(messages.size){i->
+                    val m=messages[i].jsonObject
+                    val sender=m.str("senderId")
+                    val mine=sender==me
+                    val bubbleColor=memberColors[sender]?:Raised
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=if(mine)Arrangement.End else Arrangement.Start){
+                        Column(Modifier.widthIn(max=300.dp)){
+                            Text(m.str("senderName"),color=bubbleColor.copy(alpha=1f),style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)
+                            Column(Modifier.fillMaxWidth().combinedClickable(onClick={},onLongClick={replyingTo=m}).background(bubbleColor,RoundedCornerShape(18.dp)).padding(12.dp)){
+                                m.strOrNull("replyPreview")?.let{preview->
+                                    Column(Modifier.fillMaxWidth().background(Color.Black.copy(alpha=.2f),RoundedCornerShape(8.dp)).padding(8.dp)){
+                                        Text("Reply",fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelSmall,color=Color.White)
+                                        Text(preview,maxLines=2,overflow=TextOverflow.Ellipsis,color=Color.White)
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                }
+                                when{
+                                    m.bool("viewOnce")->Text(if(mine)"Quickie 😈 sent" else "Quickie 😈 · View once",color=Color.White)
+                                    m.str("kind") in setOf("IMAGE","GIF")->AsyncImage(authenticatedImageModel(m.strOrNull("body")),"Group photo",Modifier.fillMaxWidth().height(220.dp),contentScale=ContentScale.Fit)
+                                    else->Text(m.str("body"),color=Color.White)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+            replyingTo?.let{original->
+                Row(Modifier.fillMaxWidth().padding(horizontal=12.dp).background(Raised,RoundedCornerShape(12.dp)).padding(8.dp),verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)){
+                        Text("Replying to ${original.str("senderName")}",color=Lavender,fontWeight=FontWeight.Bold)
+                        Text(replySnippet(original),maxLines=2,overflow=TextOverflow.Ellipsis,color=Color.White)
+                    }
+                    IconButton({replyingTo=null}){Icon(Icons.Default.Close,"Cancel reply")}
+                }
+            }
+            Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){
+                OutlinedTextField(text,{text=it},Modifier.weight(1f),placeholder={Text("Message")})
+                IconButton({
+                    val body=text.trim()
+                    if(body.isNotBlank()){
+                        val target=replyingTo?.strOrNull("id")
+                        text="";replyingTo=null
+                        vm.runTask{
+                            ApiClient.request("group-chats/$id/messages",HttpMethod.Post,buildJsonObject{
+                                put("body",body)
+                                if(target!=null)put("replyToId",target)
+                            })
+                            load()
+                        }
+                    }
+                }){Icon(Icons.Default.Send,"Send")}
+            }
+        }
+    }
     if(confirmLeave)AlertDialog(onDismissRequest={if(!leaving)confirmLeave=false},title={Text("Leave group?")},text={Text("You will leave this group chat and stop receiving its messages.")},dismissButton={TextButton({confirmLeave=false},enabled=!leaving){Text("Cancel")}},confirmButton={TextButton({if(!leaving){leaving=true;vm.runTask{try{ApiClient.request("group-chats/$id/leave",HttpMethod.Post);confirmLeave=false;back()}finally{leaving=false}}}},enabled=!leaving){Text(if(leaving)"Leaving..." else "Leave group",color=Color(0xFFFF777E))}})
     openedGallery?.let{SharedGalleryViewer(it){openedGallery=null}}
 }
