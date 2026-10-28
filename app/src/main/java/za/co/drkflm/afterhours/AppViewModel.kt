@@ -27,15 +27,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init { restore() }
     fun restore() = viewModelScope.launch {
-        runCatching { refresh() }.onSuccess { phase.value = SessionPhase.SignedIn; refreshUnread(); runCatching { PushNotifications.register() } }
+        runCatching { refresh() }.onSuccess { phase.value = SessionPhase.SignedIn; reportPlatformVisit(); refreshUnread(); runCatching { PushNotifications.register() } }
             .onFailure { phase.value = SessionPhase.SignedOut }
     }
     suspend fun refresh() { user.value = ApiClient.request("auth/me").jsonObject }
+    private suspend fun reportPlatformVisit() {
+        runCatching { ApiClient.request("platform-visit", HttpMethod.Post, obj("platform" to "android")) }
+    }
     fun login(email: String, password: String) = runTask {
         ApiClient.request("auth/login", HttpMethod.Post, obj("email" to email, "password" to password)); refresh(); phase.value = SessionPhase.SignedIn; refreshUnread(); runCatching { PushNotifications.register() }
     }
     fun register(email: String, password: String, name: String, birthDate: String, consent: Boolean) = runTask {
-        ApiClient.request("auth/register", HttpMethod.Post, obj("email" to email, "password" to password, "displayName" to name, "dateOfBirth" to birthDate, "consent" to consent)); refresh(); phase.value = SessionPhase.SignedIn; runCatching { PushNotifications.register() }
+        ApiClient.request("auth/register", HttpMethod.Post, obj("email" to email, "password" to password, "displayName" to name, "dateOfBirth" to birthDate, "consent" to consent)); refresh(); phase.value = SessionPhase.SignedIn; reportPlatformVisit(); runCatching { PushNotifications.register() }
     }
     fun logout() = runTask { runCatching { PushNotifications.unregister() }; runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
     fun routePush(conversationId:String?,groupId:String?){
