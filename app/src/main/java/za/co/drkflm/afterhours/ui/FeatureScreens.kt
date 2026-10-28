@@ -172,7 +172,7 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
                 if(metadata.isNotEmpty())Text(metadata.joinToString(" · "),color=Lavender)
                 Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
                     ElectricButton({if(!liking){liking=true;scope.launch{try{val wasLiked=liked;ApiClient.request("likes/$id",if(wasLiked)HttpMethod.Delete else HttpMethod.Post);liked=!wasLiked}catch(e:Exception){vm.error.value=e.message?:"Could not update this like"}finally{liking=false}}}},Modifier.weight(1f)){Icon(if(liked)Icons.Default.Favorite else Icons.Default.FavoriteBorder,null);Text(if(liking)" Updating..." else if(liked)" Unlike" else " Like")}
-                    ElectricButton({vm.runTask{val conversation=ApiClient.request("conversations",HttpMethod.Post,obj("userId" to id)).jsonObject;vm.pendingConversation.value=conversation.str("id")}},Modifier.weight(1f)){Icon(Icons.Default.Chat,null);Text(" Message")}
+                    ElectricButton({scope.launch{try{val conversation=ApiClient.request("conversations",HttpMethod.Post,obj("userId" to id)).jsonObject;val conversationId=conversation.str("id");if(conversationId.isBlank())throw IllegalStateException("Could not open conversation");vm.pendingConversation.value=conversationId}catch(e:Exception){vm.error.value=e.message?:"Could not open chat"}}},Modifier.weight(1f)){Icon(Icons.Default.Chat,null);Text(" Message")}
                 }
                 profile.publicString("bio")?.let { Text(it,Modifier.glassCard(),color=Color.White) }
                 ProfileDetailsSection("About",listOf(
@@ -234,7 +234,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val inboxRevision = Presence.revision.intValue
     LaunchedEffect(tab,inboxRevision) { if(inboxRevision>0) runCatching { load() } }
     LaunchedEffect(tab) { while(true) { delay(30_000); runCatching { load() } } }
-    LaunchedEffect(vm.pendingConversation.value){vm.pendingConversation.value?.let{id->vm.runTask{val all=ApiClient.request("conversations").jsonArray;chat=all.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject;vm.pendingConversation.value=null}}}
+    LaunchedEffect(vm.pendingConversation.value){vm.pendingConversation.value?.let{id->tab=0;try{val all=ApiClient.request("conversations").jsonArray;chat=all.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject;if(chat==null)vm.error.value="Conversation could not be found. Please try again."}catch(e:Exception){vm.error.value=e.message?:"Could not load conversation"}finally{vm.pendingConversation.value=null}}}
     LaunchedEffect(vm.pendingGroup.value){vm.pendingGroup.value?.let{id->tab=1;vm.runTask{items=ApiClient.request("group-chats").jsonArray;chat=items.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject;vm.pendingGroup.value=null}}}
     chat?.let{if(tab==0)DirectChat(vm,it){chat=null;vm.runTask{load()}}else GroupChatScreen(vm,it){chat=null;vm.runTask{load()}};return}
     Column{
