@@ -97,12 +97,18 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
 private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Vers"->"↗";"Vers"->"↕";"Bottom / Vers"->"↘";"Bottom"->"↓";"Side"->"↔";else->""}
 @Composable private fun GridChip(text:String,symbol:String?=null){Row(Modifier.border(1.dp,Electric.copy(alpha=.8f),RoundedCornerShape(50)).background(Electric.copy(alpha=.13f),RoundedCornerShape(50)).padding(horizontal=7.dp,vertical=3.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){symbol?.takeIf{it.isNotBlank()}?.let{Text(it,color=Lavender,style=MaterialTheme.typography.labelSmall)};Text(text,color=Lavender,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold,maxLines=1)}}
 @Composable private fun ProfileTile(p:JsonObject,open:()->Unit){
+    var liked by remember(p.str("id"),p.bool("liked")){mutableStateOf(p.bool("liked"))}
+    var liking by remember(p.str("id")){mutableStateOf(false)}
+    val scope=rememberCoroutineScope()
     val shape=RoundedCornerShape(20.dp)
     val position=p.strOrNull("position").visibleProfileValue()?.takeUnless{it=="Prefer not to say"}
     val status=p.strOrNull("circumcisionStatus")?.takeIf{it=="Cut"||it=="Uncut"}
     Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(shape).background(Raised).border(if(p.bool("chatted"))2.5.dp else 1.dp,if(p.bool("chatted"))Electric else Color.White.copy(alpha=.12f),shape).clickable(onClick=open)){
         AsyncImage(authenticatedImageModel(p.strOrNull("photo")),null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color.Transparent,.46f to Color.Black.copy(alpha=.12f),1f to Color.Black.copy(alpha=.96f))))
+        Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(43.dp).clip(CircleShape).background(Color(0xBB333039)).clickable(enabled=!liking){
+            if(!liked){liking=true;scope.launch {try {ApiClient.request("likes/${p.str("id")}",HttpMethod.Post);liked=true}catch(_:Exception){}finally{liking=false}}}
+        },contentAlignment=Alignment.Center){Icon(if(liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,"Like ${p.str("displayName")}",tint=if(liked) Color(0xFFFF29B7) else Color.White,modifier=Modifier.size(26.dp))}
         Column(Modifier.matchParentSize().padding(9.dp)){
             Spacer(Modifier.weight(1f))
             Text("${p.str("displayName")}${p["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,color=Color.White,style=MaterialTheme.typography.titleMedium)
