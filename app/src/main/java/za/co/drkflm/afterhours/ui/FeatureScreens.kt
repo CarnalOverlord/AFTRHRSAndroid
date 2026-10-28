@@ -107,7 +107,7 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
         AsyncImage(authenticatedImageModel(p.strOrNull("photo")),null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color.Transparent,.46f to Color.Black.copy(alpha=.12f),1f to Color.Black.copy(alpha=.96f))))
         Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(43.dp).clip(CircleShape).background(Color(0xBB333039)).clickable(enabled=!liking){
-            if(!liked){liking=true;scope.launch {try {ApiClient.request("likes/${p.str("id")}",HttpMethod.Post);liked=true}catch(_:Exception){}finally{liking=false}}}
+            liking=true;scope.launch {try {ApiClient.request("likes/${p.str("id")}",if(liked)HttpMethod.Delete else HttpMethod.Post);liked=!liked}catch(_:Exception){}finally{liking=false}}
         },contentAlignment=Alignment.Center){Icon(if(liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,"Like ${p.str("displayName")}",tint=if(liked) Color(0xFFFF29B7) else Color.White,modifier=Modifier.size(26.dp))}
         Column(Modifier.matchParentSize().padding(9.dp)){
             Spacer(Modifier.weight(1f))
@@ -142,7 +142,7 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
                     if(values.isNotEmpty())Column(Modifier.fillMaxWidth().glassCard()){Text(title,fontWeight=FontWeight.Bold,color=Color.White);Text(values.joinToString(" · "),color=Lavender)}
                 }
                 Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                    ElectricButton({if(!liked&&!liking){liking=true;scope.launch{try{ApiClient.request("likes/$id",HttpMethod.Post);liked=true}catch(e:Exception){vm.error.value=e.message?:"Could not like this profile"}finally{liking=false}}}},Modifier.weight(1f)){Icon(if(liked)Icons.Default.Favorite else Icons.Default.FavoriteBorder,null);Text(if(liked)" Liked" else if(liking)" Liking..." else " Like")}
+                    ElectricButton({if(!liking){liking=true;scope.launch{try{val wasLiked=liked;ApiClient.request("likes/$id",if(wasLiked)HttpMethod.Delete else HttpMethod.Post);liked=!wasLiked}catch(e:Exception){vm.error.value=e.message?:"Could not update this like"}finally{liking=false}}}},Modifier.weight(1f)){Icon(if(liked)Icons.Default.Favorite else Icons.Default.FavoriteBorder,null);Text(if(liking)" Updating..." else if(liked)" Unlike" else " Like")}
                     ElectricButton({vm.runTask{val conversation=ApiClient.request("conversations",HttpMethod.Post,obj("userId" to id)).jsonObject;vm.pendingConversation.value=conversation.str("id")}},Modifier.weight(1f)){Icon(Icons.Default.Chat,null);Text(" Message")}
                 }
                 TextButton({safety=true},Modifier.align(Alignment.CenterHorizontally)){Text("Block or report",color=Color(0xFFFFB4AB))}
