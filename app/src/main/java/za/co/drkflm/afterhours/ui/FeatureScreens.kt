@@ -54,6 +54,11 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import android.text.format.DateUtils
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.VideoView
 
 private fun String?.visibleProfileValue():String? = this?.trim()?.takeIf {
     it.isNotEmpty() && it.lowercase() !in setOf("unavailable","hidden","unknown","not set","n/a","null","off")
@@ -282,9 +287,12 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var cameraFile by remember{mutableStateOf<File?>(null)}
     var chooseGallery by remember{mutableStateOf(false)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
+    var quickiePicker by remember { mutableStateOf(false) }
+    var openedQuickie by remember { mutableStateOf<Pair<ByteArray,String>?>(null) }
     val listState=rememberLazyListState()
     suspend fun load(){messages=ApiClient.request("conversations/$id/messages").jsonArray;val unread=messages.map{it.jsonObject}.filter{it.str("senderId")!=vm.user.value?.str("id")}.map{it.str("id")}.filter{it.isNotBlank()};if(unread.isNotEmpty())runCatching{ApiClient.request("conversations/$id/read",HttpMethod.Post,buildJsonObject{put("messageIds",buildJsonArray{unread.forEach{add(it)}})})}}
     fun upload(file:File){vm.runTask{ApiClient.upload("conversations/$id/images",file);load()}}
+    val quickiePhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/images");load()}}}
     val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->if(saved)cameraFile?.let(::upload)}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
@@ -299,14 +307,67 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             Spacer(Modifier.width(12.dp))
             Column{Text(other?.str("displayName")?:"Chat",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){Box(Modifier.size(8.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.bodySmall)}}
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=listState,contentPadding=PaddingValues(12.dp),reverseLayout=false){items(messages.size){i->MessageBubble(messages[i].jsonObject,vm.user.value?.str("id")){galleryId->vm.runTask{openedGallery=ApiClient.request("private-galleries/$galleryId/view").jsonObject}}}}
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=listState,contentPadding=PaddingValues(12.dp),reverseLayout=false){items(messages.size){i->MessageBubble(messages[i].jsonObject,vm.user.value?.str("id"),openGallery={galleryId->vm.runTask{openedGallery=ApiClient.request("private-galleries/$galleryId/view").jsonObject}},openOnce={messageId->vm.runTask{val media=ApiClient.openOnce(id,messageId);openedQuickie=media;load()}}}}
         Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){IconButton({attach=true}){Icon(Icons.Default.AddCircle,"Attachments",tint=Lavender)};OutlinedTextField(text,{text=it},Modifier.weight(1f),placeholder={Text("Message",color=Muted)});IconButton({val body=text.trim();if(body.isNotEmpty()){text="";vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}}}){Icon(Icons.Default.Send,"Send",tint=HotPink)}}
     }
-    if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true})
+    if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it){openedGallery=null}}
+    if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Text("One look. Then it\u0027s gone.")},confirmButton={TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Choose photo")}},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
+    openedQuickie?.let { media -> QuickieViewer(media){openedQuickie=null} }
 }
-@Composable private fun MessageBubble(m:JsonObject,me:String?,openGallery:(String)->Unit={}){val mine=m.str("senderId")==me;Row(Modifier.fillMaxWidth().padding(vertical=4.dp),horizontalArrangement=if(mine)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=300.dp).background(if(mine)Electric.copy(alpha=.5f)else Raised,RoundedCornerShape(18.dp)).padding(12.dp)){val body=m.str("body");val kind=m.str("kind").uppercase();when{m.bool("viewOnce")->Text(if(mine)"View-once media sent" else "Tap to open view-once media",color=Lavender,fontWeight=FontWeight.SemiBold);body.startsWith("LOCATION:")-> {val context=LocalContext.current;val coords=body.removePrefix("LOCATION:").trim();val parts=coords.split(",");val valid=parts.size==2&&parts.all{it.trim().toDoubleOrNull()!=null};Column(Modifier.clickable(enabled=valid){val uri=Uri.parse("geo:0,0?q=${Uri.encode(coords)}");runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,uri))}.onFailure{runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/maps/search/?api=1&query=${Uri.encode(coords)}")))}}}){Text("📍 Shared location",fontWeight=FontWeight.Bold,color=Color.White);Text(if(valid)"Tap to open in Maps" else "Location unavailable",color=Lavender)}};kind=="IMAGE"||kind=="GIF"->AsyncImage(authenticatedImageModel(body),"Chat image",Modifier.fillMaxWidth().heightIn(min=120.dp,max=320.dp).clip(RoundedCornerShape(12.dp)),contentScale=ContentScale.Fit);kind=="VIDEO"->Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PlayCircle,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Video received",color=Color.White)};kind=="GALLERY"||body.startsWith("GALLERY_SHARE:")->Column(Modifier.clickable{body.substringAfter("GALLERY_SHARE:").takeIf{it.isNotBlank()}?.let(openGallery)}){Text("Private gallery shared",color=Color.White,fontWeight=FontWeight.SemiBold);Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)};else->ChatLinkPreview(body)}}}}
+@Composable private fun MessageBubble(m:JsonObject,me:String?,openGallery:(String)->Unit={},openOnce:(String)->Unit={}){
+    val mine=m.str("senderId")==me
+    val body=m.str("body")
+    val kind=m.str("kind").uppercase()
+    Row(Modifier.fillMaxWidth().padding(vertical=4.dp),horizontalArrangement=if(mine)Arrangement.End else Arrangement.Start){
+        Column(Modifier.widthIn(max=300.dp).background(if(mine)Electric.copy(alpha=.5f)else Raised,RoundedCornerShape(18.dp)).padding(12.dp)){
+            when {
+                m.bool("viewOnce") -> Column(Modifier.clickable(enabled=!mine && !m.bool("opened")){openOnce(m.str("id"))},verticalArrangement=Arrangement.spacedBy(3.dp)){
+                    Text("Quickie 😈",color=Lavender,fontWeight=FontWeight.Bold)
+                    Text(if(mine)"Sent · One look. Then it's gone." else if(m.bool("opened"))"Already opened" else "Tap to view once",color=Color.White)
+                }
+                body.startsWith("LOCATION:") -> {
+                    val context=LocalContext.current
+                    val coords=body.removePrefix("LOCATION:").trim()
+                    val parts=coords.split(",")
+                    val valid=parts.size==2&&parts.all{it.trim().toDoubleOrNull()!=null}
+                    Column(Modifier.clickable(enabled=valid){val uri=Uri.parse("geo:0,0?q=${Uri.encode(coords)}");runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,uri))}.onFailure{runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/maps/search/?api=1&query=${Uri.encode(coords)}")))}}}){
+                        Text("📍 Shared location",fontWeight=FontWeight.Bold,color=Color.White)
+                        Text(if(valid)"Tap to open in Maps" else "Location unavailable",color=Lavender)
+                    }
+                }
+                kind=="IMAGE"||kind=="GIF" -> AsyncImage(authenticatedImageModel(body),"Chat image",Modifier.fillMaxWidth().heightIn(min=120.dp,max=320.dp).clip(RoundedCornerShape(12.dp)),contentScale=ContentScale.Fit)
+                kind=="VIDEO" -> Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PlayCircle,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Video received",color=Color.White)}
+                kind=="GALLERY"||body.startsWith("GALLERY_SHARE:") -> Column(Modifier.clickable{body.substringAfter("GALLERY_SHARE:").takeIf{it.isNotBlank()}?.let(openGallery)}){
+                    Text("Private gallery shared",color=Color.White,fontWeight=FontWeight.SemiBold)
+                    Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)
+                }
+                else -> ChatLinkPreview(body)
+            }
+        }
+    }
+}
+@Composable private fun QuickieViewer(media:Pair<ByteArray,String>,dismiss:()->Unit){
+    val context=LocalContext.current
+    val video=media.second.startsWith("video/")
+    val temp=remember(media){if(video)File.createTempFile("quickie-",".mp4",context.cacheDir).apply{writeBytes(media.first)}else null}
+    DisposableEffect(temp){onDispose{temp?.delete()}}
+    androidx.compose.ui.window.Dialog(onDismissRequest=dismiss){
+        Column(Modifier.fillMaxWidth().background(Panel,RoundedCornerShape(18.dp)).padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally){
+            Text("Quickie 😈",color=Lavender,fontWeight=FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            if(video && temp!=null) AndroidView(factory={ctx->VideoView(ctx).apply{setVideoPath(temp.absolutePath);setOnPreparedListener{it.isLooping=false;start()}}},modifier=Modifier.fillMaxWidth().height(400.dp))
+            else {
+                val bitmap=remember(media){BitmapFactory.decodeByteArray(media.first,0,media.first.size)?.asImageBitmap()}
+                if(bitmap!=null)Image(bitmap,"Quickie",Modifier.fillMaxWidth().heightIn(max=550.dp),contentScale=ContentScale.Fit)
+                else Text("Unable to display this media.",color=Muted)
+            }
+            Text("One look. Then it's gone.",color=Muted)
+            TextButton(onClick=dismiss){Text("Close")}
+        }
+    }
+}
 
 @Composable private fun ChatLinkPreview(body:String){
     val link=remember(body){chatLink(body)}
@@ -341,7 +402,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
 
 @Composable private fun SharedGalleryViewer(gallery:JsonObject,dismiss:()->Unit){ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=800.dp).padding(horizontal=18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(gallery.strOrNull("title")?:"Private gallery",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);val photos=gallery.array("photos");if(photos.isEmpty())Box(Modifier.fillMaxWidth().height(240.dp),contentAlignment=Alignment.Center){Text("This gallery has no photos.",color=Muted)}else LazyColumn(Modifier.heightIn(max=620.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(photos.size){index->AsyncImage(authenticatedImageModel(photos[index].jsonObject.strOrNull("url")),"Gallery photo",Modifier.fillMaxWidth().heightIn(min=260.dp,max=560.dp).clip(RoundedCornerShape(18.dp)).background(Raised),contentScale=ContentScale.Fit)}};OutlinedButton(dismiss,Modifier.fillMaxWidth()){Text("Done")};Spacer(Modifier.height(20.dp))}}}
 
-@Composable private fun AttachmentSheet(dismiss:()->Unit,vm:AppViewModel,send:(String)->Unit,camera:()->Unit,photo:()->Unit,privateGallery:()->Unit){
+@Composable private fun AttachmentSheet(dismiss:()->Unit,vm:AppViewModel,send:(String)->Unit,camera:()->Unit,photo:()->Unit,privateGallery:()->Unit,quickie:()->Unit){
     val context=LocalContext.current
     val scope=rememberCoroutineScope()
     fun shareLocation(){scope.launch{runCatching{currentLocation(context)}.onSuccess{send("LOCATION:${it.first},${it.second}");dismiss()}.onFailure{vm.error.value=it.message?:"Location could not be shared."}}}
@@ -351,6 +412,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         ListItem(headlineContent={Text("Share current location")},leadingContent={Icon(Icons.Default.LocationOn,null)},modifier=Modifier.clickable{if(ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED)shareLocation()else request.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))})
         ListItem(headlineContent={Text("Camera")},supportingContent={Text("Take a new photo")},leadingContent={Icon(Icons.Default.PhotoCamera,null)},modifier=Modifier.clickable(onClick=camera))
         ListItem(headlineContent={Text("Photo Gallery")},supportingContent={Text("Choose an existing photo")},leadingContent={Icon(Icons.Default.PhotoLibrary,null)},modifier=Modifier.clickable(onClick=photo))
+        ListItem(headlineContent={Text("Quickie 😈")},supportingContent={Text("One look. Then it\u0027s gone.")},leadingContent={Icon(Icons.Default.LocalFireDepartment,null)},modifier=Modifier.clickable(onClick=quickie))
         ListItem(headlineContent={Text("Private Gallery")},leadingContent={Icon(Icons.Default.Collections,null)},modifier=Modifier.clickable(onClick=privateGallery))
         Spacer(Modifier.height(14.dp))
     }}
