@@ -18,7 +18,7 @@ import coil3.network.NetworkHeaders
 class ApiException(message: String) : Exception(message)
 
 object ApiClient {
-    const val ORIGIN = "https://afterhours.drkflm.co.za"
+    const val ORIGIN = "https://app.aftrhrs.co.za"
     private const val BASE = "$ORIGIN/api/v1/"
     val json = Json { ignoreUnknownKeys = true; isLenient = true; explicitNulls = false }
     private val client = HttpClient(OkHttp) {
