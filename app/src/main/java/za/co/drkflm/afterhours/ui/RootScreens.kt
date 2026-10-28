@@ -18,6 +18,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import za.co.drkflm.afterhours.data.Presence
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
@@ -40,6 +44,18 @@ import java.io.File
 import java.time.LocalDate
 
 @Composable fun AftrhrsRoot(vm: AppViewModel, locked: Boolean, authenticating: Boolean, authError: String?, lockEnabled: Boolean, unlock: () -> Unit, setLock: (Boolean) -> Unit) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val presenceAllowed = vm.phase.value == SessionPhase.SignedIn && vm.canEnter && !locked
+    DisposableEffect(lifecycleOwner, presenceAllowed) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START && presenceAllowed) Presence.connect()
+            if (event == Lifecycle.Event.ON_STOP) Presence.disconnect()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (presenceAllowed && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) Presence.connect()
+        else Presence.disconnect()
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); Presence.disconnect() }
+    }
     NightBackground {
         when {
             vm.phase.value == SessionPhase.Loading -> LaunchScreen()
