@@ -16,7 +16,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "za.co.drkflm.afterhours"
+        applicationId = "za.co.aftrhrs"
         minSdk = 26
         targetSdk = 36
         versionCode = 24
