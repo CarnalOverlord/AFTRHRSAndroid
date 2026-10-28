@@ -57,6 +57,9 @@ object ApiClient {
             val mediaType = when (file.extension.lowercase()) {
                 "png" -> "image/png"
                 "webp" -> "image/webp"
+                "mp4" -> "video/mp4"
+                "webm" -> "video/webm"
+                "mov" -> "video/quicktime"
                 else -> "image/jpeg"
             }.toMediaType()
             val form = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
