@@ -13,6 +13,10 @@ import io.ktor.http.content.*
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.*
 import java.io.File
+import okhttp3.MultipartBody
+import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import coil3.network.NetworkHeaders
 
 class ApiException(message: String) : Exception(message)
@@ -48,16 +52,27 @@ object ApiClient {
         return runCatching { json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
     }
 
-    suspend fun upload(path: String, file: File, field: String = "image", fields: Map<String, String> = emptyMap()): JsonElement {
-        val response = client.submitFormWithBinaryData(BASE + path, formData {
-            fields.forEach { (key, value) -> append(key, value) }
-            append(field, file.readBytes(), Headers.build {
-                append(HttpHeaders.ContentType, "image/jpeg")
-                append(HttpHeaders.ContentDisposition, "filename=\"photo.jpg\"")
-            })
-        })
-        return unwrap(response.status.value, response.body<String>())
-    }
+    suspend fun upload(path: String, file: File, field: String = "image", fields: Map<String, String> = emptyMap()): JsonElement =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val mediaType = when (file.extension.lowercase()) {
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                else -> "image/jpeg"
+            }.toMediaType()
+            val form = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+                fields.forEach { (key, value) -> addFormDataPart(key, value) }
+                addFormDataPart(field, file.name, file.readBytes().toRequestBody(mediaType))
+            }.build()
+            val request = Request.Builder()
+                .url(BASE + path)
+                .post(form)
+                .header("Accept", "application/json")
+                .header("X-AFTRHRS-Client", "AFTRHRS-Native-Android/1.0")
+                .build()
+            Network.http.newCall(request).execute().use { response ->
+                unwrap(response.code, response.body?.string().orEmpty())
+            }
+        }
 
     fun imageHeaders(): NetworkHeaders = NetworkHeaders.Builder().apply {
         Network.cookieHeader().takeIf { it.isNotBlank() }?.let { set("Cookie", it) }
