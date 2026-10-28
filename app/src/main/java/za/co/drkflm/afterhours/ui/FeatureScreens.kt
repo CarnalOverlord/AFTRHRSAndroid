@@ -121,6 +121,20 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
     }
 }
 
+private fun publicProfileText(value:String?):String? = value.visibleProfileValue()?.takeUnless { it.equals("Prefer not to say",true) || it.equals("Do not show",true) }
+@Composable private fun ProfileDetailsSection(title:String, entries:List<Pair<String,String?>>) {
+    val visible=entries.mapNotNull { (label,value) -> publicProfileText(value)?.let { label to it } }
+    if(visible.isNotEmpty()) Column(Modifier.fillMaxWidth().glassCard(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        Text(title,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+        visible.forEach { (label,value) -> Column(verticalArrangement=Arrangement.spacedBy(2.dp)) {
+            Text(label,color=Muted,style=MaterialTheme.typography.labelMedium)
+            Text(value,color=Color.White)
+        } }
+    }
+}
+private fun JsonObject.publicList(key:String):String? = array(key).mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.let(::publicProfileText) }.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+private fun JsonObject.publicString(key:String):String? = publicProfileText(strOrNull(key))
+
 @Composable fun ProfileScreen(vm:AppViewModel,id:String,back:()->Unit){
     BackHandler(onBack=back)
     var p by remember{mutableStateOf<JsonObject?>(null)}
@@ -144,10 +158,44 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
                     ElectricButton({if(!liking){liking=true;scope.launch{try{val wasLiked=liked;ApiClient.request("likes/$id",if(wasLiked)HttpMethod.Delete else HttpMethod.Post);liked=!wasLiked}catch(e:Exception){vm.error.value=e.message?:"Could not update this like"}finally{liking=false}}}},Modifier.weight(1f)){Icon(if(liked)Icons.Default.Favorite else Icons.Default.FavoriteBorder,null);Text(if(liking)" Updating..." else if(liked)" Unlike" else " Like")}
                     ElectricButton({vm.runTask{val conversation=ApiClient.request("conversations",HttpMethod.Post,obj("userId" to id)).jsonObject;vm.pendingConversation.value=conversation.str("id")}},Modifier.weight(1f)){Icon(Icons.Default.Chat,null);Text(" Message")}
                 }
-                profile.strOrNull("bio").visibleProfileValue()?.let{Text(it,Modifier.glassCard(),color=Color.White)}
-                listOf("Interests" to "interests","Intentions" to "intentions","Kinks" to "kinks","Tags" to "tags").forEach{(title,key)->
-                    val values=profile.array(key).mapNotNull{it.jsonPrimitive.contentOrNull.visibleProfileValue()}
-                    if(values.isNotEmpty())Column(Modifier.fillMaxWidth().glassCard()){Text(title,fontWeight=FontWeight.Bold,color=Color.White);Text(values.joinToString(" · "),color=Lavender)}
+                profile.publicString("bio")?.let { Text(it,Modifier.glassCard(),color=Color.White) }
+                ProfileDetailsSection("About",listOf(
+                    "Gender" to profile.publicString("gender"),
+                    "Identity" to profile.publicString("identity"),
+                    "Pronouns" to profile.publicString("pronouns"),
+                    "Position" to profile.publicString("position"),
+                    "Cut / Uncut" to profile.publicString("circumcisionStatus"),
+                    "Body type" to profile.publicString("bodyType"),
+                    "Relationship" to profile.publicString("relationshipStatus"),
+                    "Catch me at" to profile.publicString("catchMeAt"),
+                    "Explicit pictures" to profile.publicString("acceptExplicitPics"),
+                    "Race" to profile.publicString("race"),
+                    "Body hair" to profile.publicString("bodyHair"),
+                    "Religion" to profile.publicString("religion"),
+                    "Tribes" to profile.publicString("clanTribe"),
+                    "Height" to profile["heightCm"]?.jsonPrimitive?.intOrNull?.let { "$it cm" },
+                    "Weight" to profile["weightKg"]?.jsonPrimitive?.intOrNull?.let { "$it kg" }
+                ))
+                ProfileDetailsSection("Looking for",listOf(
+                    "Intentions" to profile.publicList("intentions"),
+                    "Interests" to profile.publicList("interests"),
+                    "Kinks" to profile.publicList("kinks"),
+                    "Tags" to profile.publicList("tags")
+                ))
+                ProfileDetailsSection("Health",listOf(
+                    "HIV status" to profile.publicString("hivStatus"),
+                    "Last HIV test" to (if(profile.publicString("hivStatus")!=null) profile.publicString("hivLastTestDate")?.take(10) else null),
+                    "PrEP" to profile.publicString("prepStatus")
+                ))
+                profile.objectOrNull("socialLinks")?.let { links ->
+                    ProfileDetailsSection("Social links",listOf(
+                        "Instagram" to links.publicString("instagram"),
+                        "Facebook" to links.publicString("facebook"),
+                        "TikTok" to links.publicString("tiktok"),
+                        "X" to links.publicString("x"),
+                        "Snapchat" to links.publicString("snapchat"),
+                        "Website" to links.publicString("website")
+                    ))
                 }
                 TextButton({safety=true},Modifier.align(Alignment.CenterHorizontally)){Text("Block or report",color=Color(0xFFFFB4AB))}
             }
