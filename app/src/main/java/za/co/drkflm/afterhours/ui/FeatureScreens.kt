@@ -482,7 +482,7 @@ private fun profileViewTime(value:String?):String?=value?.let{runCatching{DateUt
         }
     }
     reviewPhoto?.let{photo->PhotoReviewDialog(photo,reviewBusy,{reviewPhoto=null}){status,note->reviewBusy=true;vm.runTask{try{ApiClient.request("admin/profile-photos/${photo.str("id")}",HttpMethod.Patch,buildJsonObject{put("status",status);put("note",note)});reviewPhoto=null;message="Profile photo ${status.lowercase()}.";load()}finally{reviewBusy=false}}}}
-    reviewIdentity?.let{member->IdentityReviewDialog(member,reviewBusy,{reviewIdentity=null}){status,note->reviewBusy=true;vm.runTask{try{ApiClient.request("admin/users/${member.str("id")}/verification",HttpMethod.Patch,buildJsonObject{put("status",status);put("note",note)});reviewIdentity=null;message="Identity submission ${status.lowercase()}.";load()}finally{reviewBusy=false}}}}
+    reviewIdentity?.let{member->IdentityReviewDialog(member,reviewBusy,{reviewIdentity=null}){status,note,manualResolution->reviewBusy=true;vm.runTask{try{ApiClient.request("admin/users/${member.str("id")}/verification",HttpMethod.Patch,buildJsonObject{put("status",status);put("note",note);put("manualResolution",manualResolution)});reviewIdentity=null;message="Identity submission ${status.lowercase()}.";load()}finally{reviewBusy=false}}}}
     message?.let{AlertDialog(onDismissRequest={message=null},confirmButton={TextButton({message=null}){Text("OK")}},title={Text("Admin review")},text={Text(it)})}
 }
 
@@ -494,7 +494,36 @@ private fun profileViewTime(value:String?):String?=value?.let{runCatching{DateUt
 
 @Composable private fun PhotoReviewDialog(photo:JsonObject,busy:Boolean,dismiss:()->Unit,decide:(String,String)->Unit){var note by remember(photo){mutableStateOf("")};AlertDialog(onDismissRequest={if(!busy)dismiss()},title={Text("Profile photo review")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){AsyncImage(authenticatedImageModel(photo.strOrNull("url")),"Profile photo awaiting moderation",Modifier.fillMaxWidth().heightIn(min=280.dp,max=470.dp).clip(RoundedCornerShape(16.dp)),contentScale=ContentScale.Fit);OutlinedTextField(note,{note=it.take(500)},label={Text("Reason if rejecting")},minLines=3,modifier=Modifier.fillMaxWidth())}},dismissButton={OutlinedButton({decide("REJECTED",note.trim())},enabled=!busy&&note.isNotBlank()){Text("Reject")}},confirmButton={ElectricButton({decide("APPROVED",note.trim())},enabled=!busy){Text(if(busy)"Saving…"else"Approve")}})}
 
-@Composable private fun IdentityReviewDialog(member:JsonObject,busy:Boolean,dismiss:()->Unit,decide:(String,String)->Unit){var note by remember(member){mutableStateOf("")};val id=member.str("id");AlertDialog(onDismissRequest={if(!busy)dismiss()},title={Text("Identity review")},text={Column(Modifier.heightIn(max=610.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(member.objectOrNull("profile")?.strOrNull("displayName")?:member.strOrNull("email")?:"Member",fontWeight=FontWeight.Bold);listOf("id-front" to "ID front","id-back" to "ID back","selfie-with-id" to "Selfie holding ID").forEach{(slug,label)->Column(verticalArrangement=Arrangement.spacedBy(5.dp)){AsyncImage(authenticatedImageModel("/api/v1/admin/verifications/$id/evidence/$slug"),label,Modifier.fillMaxWidth().heightIn(min=190.dp,max=360.dp).clip(RoundedCornerShape(14.dp)),contentScale=ContentScale.Fit);Text(label,color=Lavender,fontWeight=FontWeight.SemiBold)}};Text("Confirm age and identity from the original evidence before deciding.",color=Muted,style=MaterialTheme.typography.bodySmall);OutlinedTextField(note,{note=it.take(500)},label={Text("Reason if rejecting")},minLines=3,modifier=Modifier.fillMaxWidth())}},dismissButton={OutlinedButton({decide("REJECTED",note.trim())},enabled=!busy&&note.isNotBlank()){Text("Reject")}},confirmButton={ElectricButton({decide("APPROVED",note.trim())},enabled=!busy){Text(if(busy)"Saving…"else"Approve")}})}
+@Composable private fun IdentityReviewDialog(member:JsonObject,busy:Boolean,dismiss:()->Unit,decide:(String,String,Boolean)->Unit){
+    var note by remember(member){mutableStateOf("")}
+    var manualResolution by remember(member){mutableStateOf(false)}
+    val id=member.str("id")
+    AlertDialog(
+        onDismissRequest={if(!busy)dismiss()},
+        title={Text("Identity review")},
+        text={Column(Modifier.heightIn(max=610.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Text(member.objectOrNull("profile")?.strOrNull("displayName")?:member.strOrNull("email")?:"Member",fontWeight=FontWeight.Bold)
+            listOf("id-front" to "ID front","id-back" to "ID back","selfie-with-id" to "Selfie holding ID").forEach{(slug,label)->
+                Column(verticalArrangement=Arrangement.spacedBy(5.dp)){
+                    AsyncImage(authenticatedImageModel("/api/v1/admin/verifications/$id/evidence/$slug"),label,Modifier.fillMaxWidth().heightIn(min=190.dp,max=360.dp).clip(RoundedCornerShape(14.dp)),contentScale=ContentScale.Fit)
+                    Text(label,color=Lavender,fontWeight=FontWeight.SemiBold)
+                }
+            }
+            Text("Confirm age and identity from the original evidence before deciding.",color=Muted,style=MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth().clickable(enabled=!busy){manualResolution=!manualResolution},verticalAlignment=Alignment.CenterVertically){
+                Checkbox(checked=manualResolution,onCheckedChange={manualResolution=it},enabled=!busy)
+                Column(Modifier.weight(1f)){
+                    Text("Manual resolution of AI discrepancy",fontWeight=FontWeight.SemiBold)
+                    Text("Use only when the ID evidence confirms the registered date of birth and the member is 18 or older. Your decision is audited.",color=Muted,style=MaterialTheme.typography.bodySmall)
+                }
+            }
+            OutlinedTextField(note,{note=it.take(500)},label={Text(if(manualResolution)"Reviewer justification (at least 20 characters)"else"Reason if rejecting")},minLines=3,modifier=Modifier.fillMaxWidth())
+            if(manualResolution&&note.trim().length<20)Text("Manual resolution requires a reviewer note of at least 20 characters.",color=Lavender,style=MaterialTheme.typography.bodySmall)
+        }},
+        dismissButton={OutlinedButton({decide("REJECTED",note.trim(),false)},enabled=!busy&&note.isNotBlank()){Text("Reject")}},
+        confirmButton={ElectricButton({decide("APPROVED",note.trim(),manualResolution)},enabled=!busy&&(!manualResolution||note.trim().length>=20)){Text(if(busy)"Saving…"else if(manualResolution)"Approve with manual resolution"else"Approve")}}
+    )
+}
 @Composable private fun SettingsItem(icon:androidx.compose.ui.graphics.vector.ImageVector,title:String,subtitle:String?,action:()->Unit){ListItem(headlineContent={Text(title,fontWeight=FontWeight.SemiBold)},supportingContent={subtitle?.let{Text(it)}},leadingContent={Icon(icon,null,tint=Lavender)},trailingContent={Icon(Icons.Default.ChevronRight,null)},colors=ListItemDefaults.colors(containerColor=Color.Transparent),modifier=Modifier.padding(horizontal=10.dp).clickable(onClick=action))}
 
 private data class LauncherIconChoice(val id:String,val title:String,val component:String,val resource:Int)
