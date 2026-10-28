@@ -121,7 +121,10 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
     BackHandler(onBack=back)
     var p by remember{mutableStateOf<JsonObject?>(null)}
     var safety by remember{mutableStateOf(false)}
-    LaunchedEffect(id){vm.runTask{p=ApiClient.request("profiles/$id").jsonObject}}
+    var liked by remember(id){mutableStateOf(false)}
+    var liking by remember(id){mutableStateOf(false)}
+    val scope=rememberCoroutineScope()
+    LaunchedEffect(id){vm.runTask{val data=ApiClient.request("profiles/$id").jsonObject;p=data;liked=data.bool("liked")}}
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){
         Header(p?.objectOrNull("profile")?.str("displayName")?:"Profile"){IconButton(back){Icon(Icons.Default.ArrowBack,"Back",tint=Color.White)}}
         p?.let{data->
@@ -139,7 +142,7 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
                     if(values.isNotEmpty())Column(Modifier.fillMaxWidth().glassCard()){Text(title,fontWeight=FontWeight.Bold,color=Color.White);Text(values.joinToString(" · "),color=Lavender)}
                 }
                 Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                    ElectricButton({vm.runTask{ApiClient.request("likes/$id",HttpMethod.Post)}},Modifier.weight(1f)){Icon(Icons.Default.Favorite,null);Text(" Like")}
+                    ElectricButton({if(!liked&&!liking){liking=true;scope.launch{try{ApiClient.request("likes/$id",HttpMethod.Post);liked=true}catch(e:Exception){vm.error.value=e.message?:"Could not like this profile"}finally{liking=false}}}},Modifier.weight(1f)){Icon(if(liked)Icons.Default.Favorite else Icons.Default.FavoriteBorder,null);Text(if(liked)" Liked" else if(liking)" Liking..." else " Like")}
                     ElectricButton({vm.runTask{val conversation=ApiClient.request("conversations",HttpMethod.Post,obj("userId" to id)).jsonObject;vm.pendingConversation.value=conversation.str("id")}},Modifier.weight(1f)){Icon(Icons.Default.Chat,null);Text(" Message")}
                 }
                 TextButton({safety=true},Modifier.align(Alignment.CenterHorizontally)){Text("Block or report",color=Color(0xFFFFB4AB))}
