@@ -4,6 +4,8 @@ workflows:
     instance_type: linux_x2
     max_build_duration: 60
     environment:
+      groups:
+        - firebase
       android_signing:
         - aftrhrs-upload
       vars:
