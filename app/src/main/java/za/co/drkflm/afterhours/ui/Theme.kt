@@ -61,7 +61,7 @@ fun Modifier.glassCard(padding: Int = 16) = this
 
 @Composable fun NightBackground(content: @Composable BoxScope.() -> Unit) {
     CompositionLocalProvider(LocalContentColor provides Color.White) {
-        Box(Modifier.fillMaxSize().background(Void).background(Brush.radialGradient(listOf(Electric.copy(alpha=.2f), Color.Transparent), radius=1100f))) {
+        Box(Modifier.fillMaxSize().background(Void).safeDrawingPadding().background(Brush.radialGradient(listOf(Electric.copy(alpha=.2f), Color.Transparent), radius=1100f))) {
             CompositionLocalProvider(LocalContentColor provides Color.White) { content() }
         }
     }
