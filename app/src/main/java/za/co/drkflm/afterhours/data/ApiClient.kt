@@ -15,6 +15,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 import okhttp3.MultipartBody
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import coil3.network.NetworkHeaders
@@ -71,6 +72,28 @@ object ApiClient {
                 .build()
             Network.http.newCall(request).execute().use { response ->
                 unwrap(response.code, response.body?.string().orEmpty())
+            }
+        }
+
+    suspend fun openOnce(conversationId: String, messageId: String): Pair<ByteArray, String> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(BASE + "conversations/$conversationId/messages/$messageId/open")
+                .post(ByteArray(0).toRequestBody(null))
+                .header("X-AFTRHRS-Client", "AFTRHRS-Native-Android/1.0")
+                .header("Cache-Control", "no-store")
+                .build()
+            Network.http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val raw = response.body?.string().orEmpty()
+                    val message = runCatching {
+                        json.parseToJsonElement(raw).jsonObject["error"]?.jsonObject
+                            ?.get("message")?.jsonPrimitive?.contentOrNull
+                    }.getOrNull() ?: "This Quickie has already been opened or is unavailable."
+                    throw ApiException(message)
+                }
+                (response.body?.bytes() ?: error("Media unavailable")) to
+                    (response.header("Content-Type") ?: "image/webp")
             }
         }
 
