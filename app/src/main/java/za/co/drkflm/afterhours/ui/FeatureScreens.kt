@@ -58,8 +58,11 @@ import android.text.format.DateUtils
 private fun String?.visibleProfileValue():String? = this?.trim()?.takeIf {
     it.isNotEmpty() && it.lowercase() !in setOf("unavailable","hidden","unknown","not set","n/a","null","off")
 }
-private val chatUrlPattern=Regex("https?://[^\\s<>\\\"']+",RegexOption.IGNORE_CASE)
-private fun chatLink(body:String):String?=chatUrlPattern.find(body)?.value?.trimEnd(*"),.!?;:".toCharArray())?.takeIf{link->runCatching{Uri.parse(link)}.getOrNull()?.let{it.scheme in setOf("http","https")&&!it.host.isNullOrBlank()}==true}
+private val chatUrlPattern=Regex("(?:https?://|www\\.)[^\\s<>\\\"']+",RegexOption.IGNORE_CASE)
+private fun chatLink(body:String):String?=chatUrlPattern.find(body)?.value?.trimEnd(*"),.!?;:".toCharArray())?.let { raw ->
+    val link=if(raw.startsWith("www.",ignoreCase=true)) "https://$raw" else raw
+    runCatching { Uri.parse(link) }.getOrNull()?.takeIf { it.scheme?.lowercase() in setOf("http","https") && !it.host.isNullOrBlank() }?.toString()
+}
 
 @Composable private fun Header(title:String,subtitle:String?=null,action:(@Composable () -> Unit)?=null){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(title,style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);subtitle?.let{Text(it,color=Muted)}};action?.invoke()}}
 @Composable private fun authenticatedImageModel(url:String?):ImageRequest { val context=LocalContext.current; return ImageRequest.Builder(context).data(ApiClient.mediaUrl(url)).httpHeaders(ApiClient.imageHeaders()).build() }
