@@ -7,6 +7,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -16,6 +19,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -82,4 +86,84 @@ private val verificationSteps=listOf(VerificationStep("ID_FRONT","id-front","Fro
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), horizontalAlignment=Alignment.CenterHorizontally){Image(painterResource(R.drawable.crescent_logo),"AFTRHRS",Modifier.fillMaxWidth(.55f));Text(if(status=="PENDING")"Verification pending" else "Verify to enter AFTRHRS",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text(if(status=="PENDING")"Your three photos are securely queued for review. AFTRHRS will unlock automatically as soon as you’re approved." else "Take three live camera photos. Screenshots and document scans are not accepted.",color=Muted,textAlign=TextAlign.Center,modifier=Modifier.padding(12.dp));verificationSteps.forEachIndexed{i,s->Row(Modifier.fillMaxWidth().padding(vertical=6.dp).glassCard(),verticalAlignment=Alignment.CenterVertically){Text("${i+1}",color=Lavender,fontWeight=FontWeight.Bold);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(s.title,fontWeight=FontWeight.Bold);Text(s.help,color=Muted,style=MaterialTheme.typography.bodySmall)};ElectricButton(onClick={active=s;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)open(s)else permission.launch(Manifest.permission.CAMERA)},modifier=Modifier.width(104.dp)){Text(if(s.id in captured)"Retake" else "Camera")}}};if(status!="PENDING"){Spacer(Modifier.height(14.dp));NeonButton("Submit for review",captured.containsAll(verificationSteps.map{it.id})){vm.runTask{ApiClient.request("verification/submit",HttpMethod.Post);status="PENDING"}}};TextButton(onClick={vm.logout()}){Text("Sign out")}}
 }
 
-@Composable private fun MainTabs(vm:AppViewModel, lockEnabled:Boolean,setLock:(Boolean)->Unit){var tab by remember{mutableIntStateOf(0)};LaunchedEffect(vm.pendingConversation.value,vm.pendingGroup.value){if(vm.pendingConversation.value!=null||vm.pendingGroup.value!=null)tab=2};BackHandler(enabled=tab!=0){tab=0};Scaffold(containerColor=androidx.compose.ui.graphics.Color.Transparent,contentColor=androidx.compose.ui.graphics.Color.White,bottomBar={NavigationBar(containerColor=Panel,contentColor=androidx.compose.ui.graphics.Color.White){listOf("The Grid" to Icons.Default.GridView,"Likes" to Icons.Default.Favorite,"Chats" to Icons.Default.Chat,"Premium" to Icons.Default.Diamond,"Me" to Icons.Default.Person).forEachIndexed{i,(label,icon)->NavigationBarItem(tab==i,{tab=i},{if(i==2&&vm.unread.intValue>0)BadgedBox({Badge{Text(vm.unread.intValue.toString())}}){Icon(icon,label)}else Icon(icon,label)},label={Text(label)})}}}){padding->Box(Modifier.padding(padding)){when(tab){0->DiscoverScreen(vm);1->LikesScreen(vm);2->InboxScreen(vm);3->PremiumScreen(vm);else->MeScreen(vm,lockEnabled,setLock)}}}}
+@Composable
+private fun MainTabs(vm: AppViewModel, lockEnabled: Boolean, setLock: (Boolean) -> Unit) {
+    var tab by remember { mutableIntStateOf(0) }
+    LaunchedEffect(vm.pendingConversation.value, vm.pendingGroup.value) {
+        if (vm.pendingConversation.value != null || vm.pendingGroup.value != null) tab = 2
+    }
+    BackHandler(enabled = tab != 0) { tab = 0 }
+
+    val tabs = listOf("The Grid", "Likes", "Chats", "Premium", "Me")
+    Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        contentColor = androidx.compose.ui.graphics.Color.White,
+        bottomBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .background(
+                        androidx.compose.ui.graphics.Color(0xCC493545),
+                        androidx.compose.foundation.shape.RoundedCornerShape(36.dp)
+                    )
+                    .border(
+                        1.dp,
+                        androidx.compose.ui.graphics.Color.White.copy(alpha = 0.28f),
+                        androidx.compose.foundation.shape.RoundedCornerShape(36.dp)
+                    )
+                    .padding(5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                tabs.forEachIndexed { index, label ->
+                    val active = tab == index
+                    val tint = if (active) Lavender else androidx.compose.ui.graphics.Color.White
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(
+                                if (active) Electric.copy(alpha = 0.23f)
+                                else androidx.compose.ui.graphics.Color.Transparent,
+                                androidx.compose.foundation.shape.RoundedCornerShape(30.dp)
+                            )
+                            .clickable { tab = index }
+                            .padding(vertical = 9.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val symbol = when (index) {
+                            0 -> Icons.Default.AutoAwesome
+                            1 -> Icons.Default.Favorite
+                            2 -> Icons.Default.ChatBubble
+                            3 -> Icons.Default.Diamond
+                            else -> Icons.Default.AccountCircle
+                        }
+                        if (index == 2 && vm.unread.intValue > 0) {
+                            BadgedBox(badge = { Badge { Text(vm.unread.intValue.toString()) } }) {
+                                Icon(symbol, contentDescription = label, tint = tint, modifier = Modifier.size(27.dp))
+                            }
+                        } else {
+                            Icon(symbol, contentDescription = label, tint = tint, modifier = Modifier.size(27.dp))
+                        }
+                        Text(
+                            label,
+                            color = tint,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    ) { padding ->
+        Box(Modifier.padding(padding)) {
+            when (tab) {
+                0 -> DiscoverScreen(vm)
+                1 -> LikesScreen(vm)
+                2 -> InboxScreen(vm)
+                3 -> PremiumScreen(vm)
+                else -> MeScreen(vm, lockEnabled, setLock)
+            }
+        }
+    }
+}
