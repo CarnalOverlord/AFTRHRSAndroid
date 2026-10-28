@@ -283,6 +283,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var messages by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))}
     var viewedProfile by remember{mutableStateOf<String?>(null)}
     var text by remember{mutableStateOf("")}
+    var replyingTo by remember { mutableStateOf<JsonObject?>(null) }
     var attach by remember{mutableStateOf(false)}
     var cameraFile by remember{mutableStateOf<File?>(null)}
     var chooseGallery by remember{mutableStateOf(false)}
@@ -308,8 +309,33 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             Spacer(Modifier.width(12.dp))
             Column{Text(other?.str("displayName")?:"Chat",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){Box(Modifier.size(8.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.bodySmall)}}
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=listState,contentPadding=PaddingValues(12.dp),reverseLayout=false){items(messages.size){i->MessageBubble(messages[i].jsonObject,vm.user.value?.str("id"),openGallery={galleryId->vm.runTask{openedGallery=ApiClient.request("private-galleries/$galleryId/view").jsonObject}},openOnce={messageId->vm.runTask{val media=ApiClient.openOnce(id,messageId);openedQuickie=media;load()}}}}
-        Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){IconButton({attach=true}){Icon(Icons.Default.AddCircle,"Attachments",tint=Lavender)};OutlinedTextField(text,{text=it},Modifier.weight(1f),placeholder={Text("Message",color=Muted)});IconButton({val body=text.trim();if(body.isNotEmpty()){text="";vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}}}){Icon(Icons.Default.Send,"Send",tint=HotPink)}}
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=listState,contentPadding=PaddingValues(12.dp),reverseLayout=false){items(messages.size){i->MessageBubble(messages[i].jsonObject,vm.user.value?.str("id"),openGallery={galleryId->vm.runTask{openedGallery=ApiClient.request("private-galleries/$galleryId/view").jsonObject}},openOnce={messageId->vm.runTask{val media=ApiClient.openOnce(id,messageId);openedQuickie=media;load()}},reply={message->replyingTo=message}}}
+        replyingTo?.let { original ->
+            Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).background(Raised,RoundedCornerShape(12.dp)).padding(10.dp),verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f)){
+                    Text("Replying to message",color=Lavender,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelMedium)
+                    Text(replySnippet(original),maxLines=2,overflow=TextOverflow.Ellipsis,color=Color.White)
+                }
+                IconButton({replyingTo=null}){Icon(Icons.Default.Close,"Cancel reply",tint=Muted)}
+            }
+        }
+        Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){
+            IconButton({attach=true}){Icon(Icons.Default.AddCircle,"Attachments",tint=Lavender)}
+            OutlinedTextField(text,{text=it},Modifier.weight(1f),placeholder={Text("Message",color=Muted)})
+            IconButton({
+                val body=text.trim()
+                if(body.isNotEmpty()){
+                    val target=replyingTo?.strOrNull("id")
+                    text="";replyingTo=null
+                    vm.runTask{
+                        ApiClient.request("conversations/$id/messages",HttpMethod.Post,buildJsonObject{
+                            put("body",body);put("kind","TEXT");if(target!=null)put("replyToId",target)
+                        })
+                        load()
+                    }
+                }
+            }){Icon(Icons.Default.Send,"Send",tint=HotPink)}
+        }
     }
     if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
@@ -317,12 +343,26 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Text("One look. Then it\u0027s gone.")},confirmButton={Row{TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Photo")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Video")}}},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
     openedQuickie?.let { media -> QuickieViewer(media){openedQuickie=null} }
 }
-@Composable private fun MessageBubble(m:JsonObject,me:String?,openGallery:(String)->Unit={},openOnce:(String)->Unit={}){
+private fun replySnippet(m:JsonObject):String = when {
+    m.bool("viewOnce") -> "Quickie 😈"
+    m.str("kind").uppercase() in setOf("IMAGE","GIF") -> "Photo"
+    m.str("kind").uppercase()=="VIDEO" -> "Video"
+    m.str("body").startsWith("LOCATION:") -> "Shared location"
+    else -> m.str("body").take(120)
+}
+@Composable private fun MessageBubble(m:JsonObject,me:String?,openGallery:(String)->Unit={},openOnce:(String)->Unit={},reply:(JsonObject)->Unit={}){
     val mine=m.str("senderId")==me
     val body=m.str("body")
     val kind=m.str("kind").uppercase()
     Row(Modifier.fillMaxWidth().padding(vertical=4.dp),horizontalArrangement=if(mine)Arrangement.End else Arrangement.Start){
-        Column(Modifier.widthIn(max=300.dp).background(if(mine)Electric.copy(alpha=.5f)else Raised,RoundedCornerShape(18.dp)).padding(12.dp)){
+        Column(Modifier.widthIn(max=300.dp).combinedClickable(onClick={},onLongClick={reply(m)}).background(if(mine)Electric.copy(alpha=.5f)else Raised,RoundedCornerShape(18.dp)).padding(12.dp)){
+            m.strOrNull("replyPreview")?.let { preview ->
+                Column(Modifier.fillMaxWidth().background(Color.Black.copy(alpha=.2f),RoundedCornerShape(8.dp)).padding(8.dp)){
+                    Text("Reply",color=Lavender,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)
+                    Text(preview,color=Color.White,maxLines=2,overflow=TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             when {
                 m.bool("viewOnce") -> Column(Modifier.clickable(enabled=!mine && !m.bool("opened")){openOnce(m.str("id"))},verticalArrangement=Arrangement.spacedBy(3.dp)){
                     Text("Quickie 😈",color=Lavender,fontWeight=FontWeight.Bold)
