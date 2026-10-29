@@ -316,7 +316,32 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             Spacer(Modifier.width(12.dp))
             Column{Text(other?.str("displayName")?:"Chat",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){Box(Modifier.size(8.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.bodySmall)}}
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=listState,contentPadding=PaddingValues(12.dp),reverseLayout=false){items(messages.size){i->MessageBubble(messages[i].jsonObject,vm.user.value?.str("id"),openGallery={galleryId->vm.runTask{openedGallery=ApiClient.request("private-galleries/$galleryId/view").jsonObject}},openOnce={messageId->vm.runTask{val media=ApiClient.openOnce(id,messageId);openedQuickie=media;load()}},reply={message->replyingTo=message}}}
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(),
+            state = listState,
+            contentPadding = PaddingValues(12.dp),
+            reverseLayout = false
+        ) {
+            items(messages.size) { i ->
+                MessageBubble(
+                    messages[i].jsonObject,
+                    vm.user.value?.str("id"),
+                    openGallery = { galleryId ->
+                        vm.runTask {
+                            openedGallery = ApiClient.request("private-galleries/$galleryId/view").jsonObject
+                        }
+                    },
+                    openOnce = { messageId ->
+                        vm.runTask {
+                            val media = ApiClient.openOnce(id, messageId)
+                            openedQuickie = media
+                            load()
+                        }
+                    },
+                    reply = { message -> replyingTo = message }
+                )
+            }
+        }
         replyingTo?.let { original ->
             Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).background(Raised,RoundedCornerShape(12.dp)).padding(10.dp),verticalAlignment=Alignment.CenterVertically){
                 Column(Modifier.weight(1f)){
