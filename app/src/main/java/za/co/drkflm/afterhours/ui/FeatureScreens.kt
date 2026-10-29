@@ -655,6 +655,22 @@ private val groupBubblePalette = listOf(
     var replyingTo by remember(id){mutableStateOf<JsonObject?>(null)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
     var showGroupMenu by remember{mutableStateOf(false)}
+    var groupTitle by remember(id){mutableStateOf(g.str("title"))}
+    var groupPhoto by remember(id){mutableStateOf(g.strOrNull("photoUrl"))}
+    var editingGroup by remember{mutableStateOf(false)}
+    var proposedTitle by remember{mutableStateOf(g.str("title"))}
+    var savingGroup by remember{mutableStateOf(false)}
+    val context=LocalContext.current
+    val groupPhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->
+        if(uri!=null)vm.runTask{
+            savingGroup=true
+            try{
+                uploadFileFromUri(context,uri,"group-chats/$id/photo","photo")
+                val latest=ApiClient.request("group-chats").jsonArray.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject
+                groupPhoto=latest?.strOrNull("photoUrl")
+            }finally{savingGroup=false}
+        }
+    }
     var confirmLeave by remember{mutableStateOf(false)}
     var leaving by remember{mutableStateOf(false)}
     val listState=rememberLazyListState()
@@ -671,10 +687,14 @@ private val groupBubblePalette = listOf(
     Column(Modifier.fillMaxSize().imePadding()){
         Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(back){Icon(Icons.Default.ArrowBack,"Back")}
-            Text(g.str("title"),Modifier.weight(1f),color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleLarge,maxLines=1)
+            if(!groupPhoto.isNullOrBlank())Avatar(groupPhoto,Modifier.size(42.dp).clickable{if(g.str("status")=="ACCEPTED")editingGroup=true})
+            else Icon(Icons.Default.Groups,null,tint=Lavender,modifier=Modifier.size(42.dp).clickable{if(g.str("status")=="ACCEPTED")editingGroup=true})
+            Spacer(Modifier.width(8.dp))
+            Text(groupTitle,Modifier.weight(1f).clickable{if(g.str("status")=="ACCEPTED")editingGroup=true},color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleLarge,maxLines=1)
             Box{
                 IconButton({showGroupMenu=true}){Icon(Icons.Default.Groups,"Group options",tint=Lavender)}
                 DropdownMenu(expanded=showGroupMenu,onDismissRequest={showGroupMenu=false}){
+                    if(g.str("status")=="ACCEPTED")DropdownMenuItem(text={Text("Edit group name and photo")},onClick={showGroupMenu=false;proposedTitle=groupTitle;editingGroup=true})
                     DropdownMenuItem(text={Text("Leave group",color=Color(0xFFFF777E))},onClick={showGroupMenu=false;confirmLeave=true})
                 }
             }
@@ -742,6 +762,27 @@ private val groupBubblePalette = listOf(
             }
         }
     }
+    if(editingGroup)AlertDialog(onDismissRequest={if(!savingGroup)editingGroup=false},
+        title={Text("Edit group")},
+        text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+            OutlinedTextField(proposedTitle,{proposedTitle=it.take(60)},label={Text("Group name")},singleLine=true,modifier=Modifier.fillMaxWidth())
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                if(!groupPhoto.isNullOrBlank())Avatar(groupPhoto,Modifier.size(58.dp))
+                else Icon(Icons.Default.Groups,null,tint=Lavender,modifier=Modifier.size(58.dp))
+                OutlinedButton(onClick={groupPhotoPicker.launch("image/*")},enabled=!savingGroup){Text("Change picture")}
+            }
+            Text("All accepted participants can change the group name and picture.",color=Muted,style=MaterialTheme.typography.bodySmall)
+        }},
+        confirmButton={TextButton(onClick={vm.runTask{
+            savingGroup=true
+            try{
+                val updated=ApiClient.request("group-chats/$id",HttpMethod.Patch,obj("title" to proposedTitle.trim())).jsonObject
+                groupTitle=updated.str("title")
+                editingGroup=false
+            }finally{savingGroup=false}
+        }},enabled=!savingGroup&&proposedTitle.trim().length in 2..60){Text("Save")}},
+        dismissButton={TextButton({editingGroup=false},enabled=!savingGroup){Text("Cancel")}}
+    )
     if(confirmLeave)AlertDialog(onDismissRequest={if(!leaving)confirmLeave=false},title={Text("Leave group?")},text={Text("You will leave this group chat and stop receiving its messages.")},dismissButton={TextButton({confirmLeave=false},enabled=!leaving){Text("Cancel")}},confirmButton={TextButton({if(!leaving){leaving=true;vm.runTask{try{ApiClient.request("group-chats/$id/leave",HttpMethod.Post);confirmLeave=false;back()}finally{leaving=false}}}},enabled=!leaving){Text(if(leaving)"Leaving..." else "Leave group",color=Color(0xFFFF777E))}})
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
 }
