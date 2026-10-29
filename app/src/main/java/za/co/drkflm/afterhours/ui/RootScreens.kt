@@ -48,7 +48,7 @@ import java.time.LocalDate
     val presenceAllowed = vm.phase.value == SessionPhase.SignedIn && vm.canEnter && !locked
     DisposableEffect(lifecycleOwner, presenceAllowed) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START && presenceAllowed) Presence.connect()
+            if (event == Lifecycle.Event.ON_START && presenceAllowed) { Presence.connect(); vm.runTask { vm.refresh() } }
             if (event == Lifecycle.Event.ON_STOP) Presence.disconnect()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
