@@ -315,7 +315,27 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->if(saved)cameraFile?.let(::upload)}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
     val cameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)openCamera()else vm.error.value="Camera permission is required to take a photo."}
-    LaunchedEffect(id){vm.runTask{refreshRequest();load()}}
+    LaunchedEffect(id){
+        runCatching{refreshRequest();load()}
+        while(true){
+            delay(4_000)
+            runCatching{
+                val latest=ApiClient.request("conversations/$id/messages").jsonArray
+                if(latest!=messages){
+                    val previousIds=messages.map{it.jsonObject.str("id")}.toSet()
+                    val newIncoming=latest.map{it.jsonObject}.filter{
+                        it.str("id") !in previousIds && it.str("senderId")!=vm.user.value?.str("id")
+                    }.map{it.str("id")}.filter{it.isNotBlank()}
+                    messages=latest
+                    if(newIncoming.isNotEmpty()){
+                        runCatching{ApiClient.request("conversations/$id/read",HttpMethod.Post,buildJsonObject{
+                            put("messageIds",buildJsonArray{newIncoming.forEach{add(it)}})
+                        })}
+                    }
+                }
+            }
+        }
+    }
     LaunchedEffect(messages.size){if(messages.isNotEmpty())listState.scrollToItem(messages.lastIndex)}
     viewedProfile?.let { profileId -> ProfileScreen(vm,profileId){viewedProfile=null};return }
     Column(Modifier.fillMaxSize().imePadding()){
