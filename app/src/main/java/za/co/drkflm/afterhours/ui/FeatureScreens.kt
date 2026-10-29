@@ -851,24 +851,89 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
 }
 
 @Composable private fun SharedGalleries(vm:AppViewModel,dismiss:()->Unit){
-    var data by remember{mutableStateOf<JsonObject?>(null)}
+    val context=LocalContext.current
+    var owned by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))}
+    var received by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))}
+    var selected by remember{mutableStateOf<String?>(null)}
     var opened by remember{mutableStateOf<JsonObject?>(null)}
-    LaunchedEffect(Unit){vm.runTask{data=ApiClient.request("private-galleries/sharing").jsonObject}}
-    AlertDialog(
-        onDismissRequest=dismiss,
-        title={Text("Shared galleries")},
-        text={Column(Modifier.heightIn(max=480.dp).verticalScroll(rememberScrollState())){
-            val owned=data?.array("sharedWith")?:JsonArray(emptyList())
-            val received=data?.array("sharedWithMe")?:JsonArray(emptyList())
-            Text("Shared by you",fontWeight=FontWeight.Bold,color=Lavender)
-            if(owned.isEmpty())Text("Nothing shared yet",color=Muted)
-            owned.forEach{g->val gallery=g.jsonObject;ListItem(headlineContent={Text(gallery.str("title"))},supportingContent={Text("${gallery.array("photos").size} photos · ${gallery.array("recipients").size} recipients")})}
-            Spacer(Modifier.height(12.dp))
-            Text("Shared with you",fontWeight=FontWeight.Bold,color=Lavender)
-            if(received.isEmpty())Text("Nothing shared with you yet",color=Muted)
-            received.forEach{g->val gallery=g.jsonObject;ListItem(headlineContent={Text(gallery.str("title"))},supportingContent={Text("From ${gallery.objectOrNull("owner")?.str("name").orEmpty()}")},trailingContent={Icon(Icons.Default.ChevronRight,"Open")},modifier=Modifier.clickable{vm.runTask{opened=ApiClient.request("private-galleries/${gallery.str("id")}/view").jsonObject}})}
-        }},
-        confirmButton={TextButton(dismiss){Text("Done")}},
-    )
+    var newTitle by remember{mutableStateOf("")}
+    var confirmGalleryDelete by remember{mutableStateOf(false)}
+    var confirmPhotoDelete by remember{mutableStateOf<String?>(null)}
+    var busy by remember{mutableStateOf(false)}
+    suspend fun reload(){
+        val result=ApiClient.request("private-galleries")
+        owned=if(result is JsonArray)result else result.jsonObject.array("items")
+        received=ApiClient.request("private-galleries/sharing").jsonObject.array("sharedWithMe")
+    }
+    LaunchedEffect(Unit){vm.runTask{reload()}}
+    val gallery=owned.firstOrNull{it.jsonObject.str("id")==selected}?.jsonObject
+    val upload=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->
+        if(uri!=null && selected!=null)vm.runTask{
+            busy=true
+            try{uploadFileFromUri(context,uri,"private-galleries/$selected/photos","photo");reload()}
+            finally{busy=false}
+        }
+    }
+    androidx.compose.ui.window.Dialog(onDismissRequest=dismiss,properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false)){
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).padding(12.dp).background(Panel,RoundedCornerShape(20.dp)).padding(16.dp)){
+            Row(verticalAlignment=Alignment.CenterVertically){
+                IconButton({if(selected!=null)selected=null else dismiss()}){Icon(Icons.Default.ArrowBack,"Back")}
+                Text(gallery?.str("title")?:"Private galleries",Modifier.weight(1f),color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleLarge)
+                IconButton(dismiss){Icon(Icons.Default.Close,"Close")}
+            }
+            if(gallery==null){
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    OutlinedTextField(newTitle,{newTitle=it.take(60)},Modifier.weight(1f),label={Text("Gallery name")},singleLine=true)
+                    IconButton({vm.runTask{busy=true;try{
+                        val created=ApiClient.request("private-galleries",HttpMethod.Post,obj("title" to newTitle.trim())).jsonObject
+                        newTitle="";reload();selected=created.str("id")
+                    }finally{busy=false}}},enabled=newTitle.isNotBlank()&&!busy){Icon(Icons.Default.AddCircle,"Create gallery",tint=Lavender)}
+                }
+                Text("Your galleries",color=Lavender,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=12.dp))
+                LazyColumn(Modifier.weight(1f)){
+                    items(owned.size){index->
+                        val g=owned[index].jsonObject
+                        ListItem(headlineContent={Text(g.str("title"))},supportingContent={Text("${g.array("photos").size} photos")},trailingContent={Icon(Icons.Default.ChevronRight,null)},modifier=Modifier.clickable{selected=g.str("id")})
+                    }
+                    item{Text("Shared with you",color=Lavender,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=16.dp))}
+                    items(received.size){index->
+                        val g=received[index].jsonObject
+                        ListItem(headlineContent={Text(g.str("title"))},supportingContent={Text("From ${g.objectOrNull("owner")?.str("name").orEmpty()}")},modifier=Modifier.clickable{vm.runTask{opened=ApiClient.request("private-galleries/${g.str("id")}/view").jsonObject}})
+                    }
+                }
+            }else{
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    Button(onClick={upload.launch("image/*")},enabled=!busy){Icon(Icons.Default.AddPhotoAlternate,null);Text(" Add photos")}
+                    OutlinedButton(onClick={confirmGalleryDelete=true},enabled=!busy){Icon(Icons.Default.Delete,null);Text(" Delete gallery")}
+                }
+                val photos=gallery.array("photos")
+                Text("${photos.size} photos · Use arrows to reorder",color=Muted)
+                LazyColumn(Modifier.weight(1f)){
+                    items(photos.size){index->
+                        val photo=photos[index].jsonObject
+                        Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
+                            AsyncImage(authenticatedImageModel(photo.str("url")),null,Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)),contentScale=ContentScale.Crop)
+                            Spacer(Modifier.weight(1f))
+                            IconButton({vm.runTask{busy=true;try{
+                                val ids=photos.map{it.jsonObject.str("id")}.toMutableList()
+                                java.util.Collections.swap(ids,index,index-1)
+                                ApiClient.request("private-galleries/$selected/reorder",HttpMethod.Post,obj("photoIds" to ids));reload()
+                            }finally{busy=false}}},enabled=index>0&&!busy){Icon(Icons.Default.KeyboardArrowUp,"Move up")}
+                            IconButton({vm.runTask{busy=true;try{
+                                val ids=photos.map{it.jsonObject.str("id")}.toMutableList()
+                                java.util.Collections.swap(ids,index,index+1)
+                                ApiClient.request("private-galleries/$selected/reorder",HttpMethod.Post,obj("photoIds" to ids));reload()
+                            }finally{busy=false}}},enabled=index<photos.lastIndex&&!busy){Icon(Icons.Default.KeyboardArrowDown,"Move down")}
+                            IconButton({confirmPhotoDelete=photo.str("id")},enabled=!busy){Icon(Icons.Default.Delete,"Remove photo",tint=Color.Red)}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if(confirmGalleryDelete)AlertDialog(onDismissRequest={confirmGalleryDelete=false},title={Text("Delete gallery?")},text={Text("The gallery and its photos will be deleted and access revoked.")},confirmButton={TextButton({confirmGalleryDelete=false;vm.runTask{busy=true;try{ApiClient.request("private-galleries/$selected",HttpMethod.Delete);selected=null;reload()}finally{busy=false}}}){Text("Delete",color=Color.Red)}},dismissButton={TextButton({confirmGalleryDelete=false}){Text("Cancel")}})
+    confirmPhotoDelete?.let{photoId->
+        AlertDialog(onDismissRequest={confirmPhotoDelete=null},title={Text("Remove photo?")},text={Text("Remove this photo from the gallery?")},confirmButton={TextButton({confirmPhotoDelete=null;vm.runTask{busy=true;try{ApiClient.request("private-galleries/$selected/photos/$photoId",HttpMethod.Delete);reload()}finally{busy=false}}}){Text("Remove",color=Color.Red)}},dismissButton={TextButton({confirmPhotoDelete=null}){Text("Cancel")}})
+    }
     opened?.let{SharedGalleryViewer(it,vm){opened=null}}
 }
