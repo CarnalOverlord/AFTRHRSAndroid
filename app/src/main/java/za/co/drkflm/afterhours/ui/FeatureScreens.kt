@@ -407,7 +407,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     }
     val quickieVideoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val quickiePhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
-    val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/images");load()}}}
+    val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty())vm.runTask{try{require(uris.size<=10){"Choose up to 10 chat photos at a time."};uris.forEach{uploadFileFromUri(context,it,"conversations/$id/images")}}finally{load()}}}
     val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->if(saved)cameraFile?.let(::upload)}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
     val cameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)openCamera()else vm.error.value="Camera permission is required to take a photo."}
@@ -1017,7 +1017,7 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
     var height by remember{mutableStateOf(profile?.get("heightCm")?.jsonPrimitive?.intOrNull?.toString().orEmpty())};var weight by remember{mutableStateOf(profile?.get("weightKg")?.jsonPrimitive?.intOrNull?.toString().orEmpty())};var hivStatus by remember{mutableStateOf(profile?.strOrNull("hivStatus")?:"Do not show")};var hivDate by remember{mutableStateOf(profile?.strOrNull("hivLastTestDate")?.take(10).orEmpty())};var prep by remember{mutableStateOf(profile?.strOrNull("prepStatus").orEmpty())};var visible by remember{mutableStateOf(profile?.get("visible")?.jsonPrimitive?.booleanOrNull?:true)}
     val social=profile?.objectOrNull("socialLinks");var instagram by remember{mutableStateOf(social?.strOrNull("instagram").orEmpty())};var facebook by remember{mutableStateOf(social?.strOrNull("facebook").orEmpty())};var tiktok by remember{mutableStateOf(social?.strOrNull("tiktok").orEmpty())};var xLink by remember{mutableStateOf(social?.strOrNull("x").orEmpty())};var snapchat by remember{mutableStateOf(social?.strOrNull("snapchat").orEmpty())};var website by remember{mutableStateOf(social?.strOrNull("website").orEmpty())};var saving by remember{mutableStateOf(false)}
     val context=LocalContext.current
-    val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"profiles/photos","photo");vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}}}
+    val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty())vm.runTask{try{val limit=if(vm.user.value?.str("subscription")=="PREMIUM")10 else 5;require(uris.size+photos.size<=limit){"Your plan allows $limit profile photos. Select up to ${(limit-photos.size).coerceAtLeast(0)} more."};uris.forEach{uploadFileFromUri(context,it,"profiles/photos","photo")}}finally{vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}}}
     fun makePrimary(photo:JsonObject){photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/${photo.str("id")}/primary",HttpMethod.Patch);vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}}
     fun movePhoto(from:Int,to:Int){if(to !in photos.indices||from==to)return;val next=photos.toMutableList().apply{add(to,removeAt(from))};photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/reorder",HttpMethod.Patch,buildJsonObject{put("photoIds",buildJsonArray{next.forEach{add(it.jsonObject.str("id"))}})});vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}}
     val genderOptions=listOf("Male","Cis Male","Trans Male","Non-Binary","Man","Woman","Non-binary","Not specified");val intentionOptions=listOf("Friends","Networking","Fun","Relationship","The Love of My Life","DL");val pronounOptions=listOf("He/Him/His","She/Her/Hers","They/Them/Theirs","Ze/Hir/Hirs","Ze/Zir/Zirs","Use my name only","Ask me","Prefer not to say");val tribeOptions=listOf("Bear","Clean Cut","Daddy","Discreet","Geek","Interracial","Jock","Leather","Otter","Poz","Rugged","Trans","Twink","Sober");val kinkOptions=listOf("Group","Couples","One on One","Oral Only","Threesomes","Public","BDSM","Slave/Master","Toy Fun")
@@ -1053,11 +1053,15 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
     }
     LaunchedEffect(Unit){vm.runTask{reload()}}
     val gallery=owned.firstOrNull{it.jsonObject.str("id")==selected}?.jsonObject
-    val upload=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->
-        if(uri!=null && selected!=null)vm.runTask{
+    val upload=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->
+        val galleryId=selected
+        if(uris.isNotEmpty() && galleryId!=null)vm.runTask{
             busy=true
-            try{uploadFileFromUri(context,uri,"private-galleries/$selected/photos","photo");reload()}
-            finally{busy=false}
+            try{
+                val existing=gallery?.array("photos")?.size?:0
+                require(uris.size+existing<=10){"A gallery holds up to 10 photos. Select up to ${(10-existing).coerceAtLeast(0)} more."}
+                uris.forEach{uploadFileFromUri(context,it,"private-galleries/$galleryId/photos","photo")}
+            }finally{reload();busy=false}
         }
     }
     androidx.compose.ui.window.Dialog(onDismissRequest=dismiss,properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false)){
