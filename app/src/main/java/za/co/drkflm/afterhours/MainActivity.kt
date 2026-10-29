@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,6 +31,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Protect every screen, including media viewers and the recent-apps preview,
+        // from standard Android screenshots, recordings, and non-secure displays.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         lockEnabled = getPreferences(MODE_PRIVATE).getBoolean("app_lock", false)
         locked = lockEnabled
         pushIntent = intent
