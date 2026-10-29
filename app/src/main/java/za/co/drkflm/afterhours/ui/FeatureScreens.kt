@@ -411,7 +411,7 @@ private fun replySnippet(m:JsonObject):String = when {
                     }
                 }
                 kind=="IMAGE"||kind=="GIF" -> AsyncImage(authenticatedImageModel(body),"Chat image",Modifier.fillMaxWidth().heightIn(min=120.dp,max=320.dp).clip(RoundedCornerShape(12.dp)),contentScale=ContentScale.Fit)
-                kind=="VIDEO" -> Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PlayCircle,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Video received",color=Color.White)}
+                kind=="VIDEO" -> Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PlayCircle,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Video received · Tap to view",color=Color.White)}
                 kind=="GALLERY"||body.startsWith("GALLERY_SHARE:") -> Column(Modifier.clickable{body.substringAfter("GALLERY_SHARE:").takeIf{it.isNotBlank()}?.let(openGallery)}){
                     Text("Private gallery shared",color=Color.White,fontWeight=FontWeight.SemiBold)
                     Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)
