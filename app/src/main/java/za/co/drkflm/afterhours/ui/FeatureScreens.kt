@@ -420,7 +420,27 @@ private fun replySnippet(m:JsonObject):String = when {
                         }
                     }
                 }
-                kind=="VIDEO" -> Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PlayCircle,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Video received · Tap to view",color=Color.White)}
+                kind=="VIDEO" -> {
+                    var fullScreen by remember(body){mutableStateOf(false)}
+                    Row(Modifier.clickable{fullScreen=true},verticalAlignment=Alignment.CenterVertically){
+                        Icon(Icons.Default.PlayCircle,null,tint=Lavender)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Tap to view video",color=Color.White)
+                    }
+                    if(fullScreen) androidx.compose.ui.window.Dialog(onDismissRequest={fullScreen=false},properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false)){
+                        Box(Modifier.fillMaxSize().background(Color.Black),contentAlignment=Alignment.Center){
+                            AndroidView(factory={ctx->VideoView(ctx).apply{
+                                val headers=mutableMapOf("X-AFTRHRS-Client" to "AFTRHRS-Native-Android/1.0")
+                                Network.cookieHeader().takeIf{it.isNotBlank()}?.let{headers["Cookie"]=it}
+                                setVideoURI(Uri.parse(ApiClient.mediaUrl(body)),headers)
+                                setOnPreparedListener{start()}
+                                val player=this
+                                setMediaController(android.widget.MediaController(ctx).apply{setAnchorView(player)})
+                            }},modifier=Modifier.fillMaxWidth().height(420.dp))
+                            IconButton({fullScreen=false},Modifier.align(Alignment.TopEnd).padding(16.dp)){Icon(Icons.Default.Close,"Close video",tint=Color.White)}
+                        }
+                    }
+                }
                 kind=="GALLERY"||body.startsWith("GALLERY_SHARE:") -> Column(Modifier.clickable{body.substringAfter("GALLERY_SHARE:").takeIf{it.isNotBlank()}?.let(openGallery)}){
                     Text("Private gallery shared",color=Color.White,fontWeight=FontWeight.SemiBold)
                     Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)
