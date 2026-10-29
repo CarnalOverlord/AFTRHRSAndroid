@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import za.co.drkflm.afterhours.BuildConfig
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -31,9 +32,19 @@ object PushNotifications {
             .addOnFailureListener { continuation.resumeWithException(it) }
     }
 
+    internal fun registration(token: String) = obj(
+        "token" to token,
+        "platform" to "android",
+        "deviceManufacturer" to Build.MANUFACTURER,
+        "deviceModel" to Build.MODEL,
+        "osVersion" to "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+        "appVersion" to BuildConfig.VERSION_NAME,
+        "appBuild" to BuildConfig.VERSION_CODE.toString(),
+    )
+
     suspend fun register() {
         val value = token()
-        ApiClient.request("push/register", HttpMethod.Post, obj("token" to value, "platform" to "android"))
+        ApiClient.request("push/register", HttpMethod.Post, registration(value))
     }
 
     suspend fun unregister() {
@@ -48,7 +59,7 @@ class AftrhrsMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         serviceScope.launch {
-            runCatching { ApiClient.request("push/register", HttpMethod.Post, obj("token" to token, "platform" to "android")) }
+            runCatching { ApiClient.request("push/register", HttpMethod.Post, PushNotifications.registration(token)) }
         }
     }
 
