@@ -5,10 +5,19 @@ import io.socket.client.IO
 import io.socket.client.Socket
 import java.net.URI
 import android.util.Log
+import android.os.Handler
+import android.os.Looper
+import org.json.JSONObject
 
 /** Share the web/iOS authenticated presence socket, only while the app is in the foreground. */
 object Presence {
     val revision = mutableIntStateOf(0)
+    val typingConversation = androidx.compose.runtime.mutableStateOf<String?>(null)
+    val typingRevision = mutableIntStateOf(0)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    fun sendTyping(conversationId:String, typing:Boolean) {
+        socket?.emit("typing", JSONObject().put("conversationId",conversationId).put("typing",typing))
+    }
     private var socket: Socket? = null
     private const val TAG = "AFTRHRS-Presence"
 
@@ -28,6 +37,14 @@ object Presence {
             connection.on(Socket.EVENT_CONNECT_ERROR) { args -> Log.w(TAG, "Presence connection failed: " + args.joinToString()) }
             connection.on(Socket.EVENT_DISCONNECT) { Log.i(TAG, "Presence disconnected"); revision.intValue++ }
             connection.on("grid:changed") { revision.intValue++ }
+            connection.on("typing") { args ->
+                val event=args.firstOrNull() as? JSONObject
+                val conversationId=event?.optString("conversationId").orEmpty()
+                if(conversationId.isNotBlank()) mainHandler.post {
+                    typingConversation.value=if(event?.optBoolean("typing")==true)conversationId else null
+                    typingRevision.intValue++
+                }
+            }
             connection.connect()
             socket = connection
         } catch (error: Exception) {
@@ -45,5 +62,6 @@ object Presence {
         socket?.disconnect()
         socket?.off()
         socket = null
+        typingConversation.value = null
     }
 }
