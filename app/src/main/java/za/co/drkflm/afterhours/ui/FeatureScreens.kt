@@ -284,6 +284,15 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val context=LocalContext.current
     val id=c.str("id")
     var other by remember(c.str("id")) { mutableStateOf(c.objectOrNull("other")) }
+    var requestStatus by remember(id){mutableStateOf(c.str("status"))}
+    var requesterId by remember(id){mutableStateOf(c.str("requestedById"))}
+    var responding by remember(id){mutableStateOf(false)}
+    val isIncomingRequest=requestStatus=="REQUESTED" && requesterId!=vm.user.value?.str("id")
+    suspend fun refreshRequest(){
+        val current=ApiClient.request("conversations").jsonArray.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject
+        if(current!=null){requestStatus=current.str("status");requesterId=current.str("requestedById")}
+    }
+
     val chatRevision = Presence.revision.intValue
     LaunchedEffect(id,chatRevision) { if(chatRevision>0) runCatching { other=ApiClient.request("conversations").jsonArray.firstOrNull { it.jsonObject.str("id")==id }?.jsonObject?.objectOrNull("other") ?: other } }
     LaunchedEffect(id) { while(true) { delay(30_000); runCatching { other=ApiClient.request("conversations").jsonArray.firstOrNull { it.jsonObject.str("id")==id }?.jsonObject?.objectOrNull("other") ?: other } } }
@@ -306,7 +315,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->if(saved)cameraFile?.let(::upload)}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
     val cameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)openCamera()else vm.error.value="Camera permission is required to take a photo."}
-    LaunchedEffect(Unit){vm.runTask{load()}}
+    LaunchedEffect(id){vm.runTask{refreshRequest();load()}}
     LaunchedEffect(messages.size){if(messages.isNotEmpty())listState.scrollToItem(messages.lastIndex)}
     viewedProfile?.let { profileId -> ProfileScreen(vm,profileId){viewedProfile=null};return }
     Column(Modifier.fillMaxSize().imePadding()){
@@ -315,6 +324,22 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             Avatar(other?.strOrNull("photo"),Modifier.size(46.dp).clickable { viewedProfile=other?.strOrNull("userId")?:other?.strOrNull("id") })
             Spacer(Modifier.width(12.dp))
             Column{Text(other?.str("displayName")?:"Chat",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){Box(Modifier.size(8.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.bodySmall)}}
+        }
+        if(isIncomingRequest){
+            Column(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=8.dp).background(Raised,RoundedCornerShape(14.dp)).padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Text("Message request",color=Lavender,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium)
+                Text("Read the message below before deciding whether to chat.",color=Color.White)
+                Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                    Button(onClick={if(!responding){responding=true;vm.runTask{try{
+                        ApiClient.request("conversations/$id/accept",HttpMethod.Post)
+                        requestStatus="ACTIVE";refreshRequest();load()
+                    }finally{responding=false}}}},enabled=!responding,modifier=Modifier.weight(1f)){Text("Accept")}
+                    OutlinedButton(onClick={if(!responding){responding=true;vm.runTask{try{
+                        ApiClient.request("conversations/$id/decline",HttpMethod.Post)
+                        requestStatus="DECLINED";back()
+                    }finally{responding=false}}}},enabled=!responding,modifier=Modifier.weight(1f)){Text("Decline")}
+                }
+            }
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
@@ -351,6 +376,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 IconButton({replyingTo=null}){Icon(Icons.Default.Close,"Cancel reply",tint=Muted)}
             }
         }
+        if(!isIncomingRequest){
         Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton({attach=true}){Icon(Icons.Default.AddCircle,"Attachments",tint=Lavender)}
             OutlinedTextField(text,{text=it},Modifier.weight(1f),placeholder={Text("Message",color=Muted)})
@@ -367,6 +393,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                     }
                 }
             }){Icon(Icons.Default.Send,"Send",tint=HotPink)}
+        }
         }
     }
     if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
