@@ -504,7 +504,37 @@ ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.
         Spacer(Modifier.height(14.dp))
     }}
 }
-private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:String="image"){val mime=context.contentResolver.getType(uri).orEmpty();val name=when(mime){"video/mp4"->"mp4";"video/quicktime"->"mov";"video/webm"->"webm";"image/png"->"png";"image/webp"->"webp";else->"jpg"};val file=File(context.cacheDir,"upload-${System.currentTimeMillis()}.$name");context.contentResolver.openInputStream(uri)?.use{input->file.outputStream().use{output->input.copyTo(output)}}?:error("The selected photo could not be read.");try{ApiClient.upload(path,file,field)}finally{file.delete()}}
+private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:String="image"){
+    val mime=context.contentResolver.getType(uri)?.lowercase()?.substringBefore(";").orEmpty()
+    val extension=android.webkit.MimeTypeMap.getFileExtensionFromUrl(uri.toString()).lowercase()
+    val type=when {
+        mime in setOf("video/mp4","video/quicktime","video/webm") -> mime
+        mime in setOf("image/jpeg","image/jpg","image/png","image/webp") -> mime
+        mime=="application/octet-stream" || mime.isBlank() -> when(extension){
+            "mp4"->"video/mp4";"mov"->"video/quicktime";"webm"->"video/webm"
+            "jpg","jpeg"->"image/jpeg";"png"->"image/png";"webp"->"image/webp"
+            else->""
+        }
+        else -> ""
+    }
+    if(type.isBlank()) error("This media format is not supported. Choose a JPEG, PNG, WebP, MP4, MOV or WebM file.")
+    val ext=when(type) {
+        "video/mp4"->"mp4";"video/quicktime"->"mov";"video/webm"->"webm"
+        "image/png"->"png";"image/webp"->"webp";else->"jpg"
+    }
+    val file=File.createTempFile("aftrhrs-upload-","."+ext,context.cacheDir)
+    try {
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            file.outputStream().use { output -> input.copyTo(output) }
+        } ?: error("The selected media could not be read.")
+        if(file.length()==0L) error("The selected media is empty.")
+        if(path.endsWith("/view-once")){
+            val maxBytes=if(type.startsWith("video/"))30L*1024*1024 else 8L*1024*1024
+            if(file.length()>maxBytes) error("Quickie is too large. Maximum ${if(type.startsWith("video/"))"30 MB for video" else "8 MB for photos"}.")
+        }
+        ApiClient.upload(path,file,field)
+    } finally { file.delete() }
+}
 @Composable private fun PrivateGalleryPicker(vm:AppViewModel,dismiss:()->Unit,select:(JsonObject)->Unit){var galleries by remember{mutableStateOf<JsonArray?>(null)};LaunchedEffect(Unit){vm.runTask{val response=ApiClient.request("private-galleries");galleries=if(response is JsonArray)response else response.jsonObject.array("items")}};AlertDialog(dismiss,title={Text("Share a private gallery")},text={LazyColumn(Modifier.heightIn(max=420.dp)){val items=galleries;if(items==null)item{CircularProgressIndicator()}else if(items.isEmpty())item{Text("You do not have a private gallery to share yet.",color=Muted)}else items(items.size){index->val gallery=items[index].jsonObject;ListItem(headlineContent={Text(gallery.strOrNull("title")?:gallery.strOrNull("name")?:"Private gallery")},supportingContent={Text("${gallery.array("photos").size} photos")},leadingContent={Icon(Icons.Default.Collections,null,tint=Lavender)},modifier=Modifier.clickable{select(gallery)})}}},confirmButton={TextButton(dismiss){Text("Cancel")}})}
 private suspend fun currentLocation(context:android.content.Context):Pair<Double,Double> = suspendCancellableCoroutine{cont->val client=LocationServices.getFusedLocationProviderClient(context);try{client.lastLocation.addOnSuccessListener{loc->if(loc!=null)cont.resume(loc.latitude to loc.longitude)else cont.resumeWithException(Exception("Current location is unavailable. Try again outdoors."))}.addOnFailureListener{cont.resumeWithException(it)}}catch(e:SecurityException){cont.resumeWithException(e)}}
 
