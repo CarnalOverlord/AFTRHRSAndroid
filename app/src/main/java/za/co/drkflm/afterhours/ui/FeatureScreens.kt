@@ -237,10 +237,11 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
 }
 
 private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQUESTED")return "Message request";val m=c["lastMessage"]?.jsonObject?:return "Start chatting";val body=m.str("body");if(body.startsWith("GALLERY_SHARE:"))return "Private gallery shared";if(body.startsWith("LOCATION:"))return "📍 Shared location";return when(m.str("kind").uppercase()){ "IMAGE","GIF"->"Image received";"VIDEO"->"Video received";"GALLERY"->"Private gallery shared";else->body } }
-@Composable fun InboxScreen(vm:AppViewModel){
+@Composable fun InboxScreen(vm:AppViewModel, chatsReselect:Int=0){
     var tab by remember{mutableIntStateOf(0)}
     var items by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))}
     var chat by remember{mutableStateOf<JsonObject?>(null)}
+    LaunchedEffect(chatsReselect){if(chatsReselect>0)chat=null}
     var newGroup by remember{mutableStateOf(false)}
     var deleteTarget by remember{mutableStateOf<JsonObject?>(null)}
     var deleting by remember{mutableStateOf(false)}
