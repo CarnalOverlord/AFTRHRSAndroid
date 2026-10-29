@@ -494,7 +494,7 @@ ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.
     val scope=rememberCoroutineScope()
     fun shareLocation(){scope.launch{runCatching{currentLocation(context)}.onSuccess{send("LOCATION:${it.first},${it.second}");dismiss()}.onFailure{vm.error.value=it.message?:"Location could not be shared."}}}
     val request=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){result->if(result.values.any{it})shareLocation()else vm.error.value="Location permission is required to share your location."}
-    ModalBottomSheet(dismiss){Column(Modifier.padding(22.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+    ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(22.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
         Text("Share",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
         ListItem(headlineContent={Text("Share current location")},leadingContent={Icon(Icons.Default.LocationOn,null)},modifier=Modifier.clickable{if(ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED)shareLocation()else request.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))})
         ListItem(headlineContent={Text("Camera")},supportingContent={Text("Take a new photo")},leadingContent={Icon(Icons.Default.PhotoCamera,null)},modifier=Modifier.clickable(onClick=camera))
