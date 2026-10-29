@@ -20,6 +20,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import za.co.drkflm.afterhours.data.Presence
 import androidx.compose.ui.Alignment
@@ -55,6 +57,14 @@ import java.time.LocalDate
         if (presenceAllowed && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) Presence.connect()
         else Presence.disconnect()
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer); Presence.disconnect() }
+    }
+    LaunchedEffect(lifecycleOwner, presenceAllowed) {
+        if (presenceAllowed) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(30_000)
+                runCatching { vm.refresh() }
+            }
+        }
     }
     NightBackground {
         when {
