@@ -352,6 +352,38 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val listState=rememberLazyListState()
     suspend fun load(){messages=ApiClient.request("conversations/$id/messages").jsonArray;val unread=messages.map{it.jsonObject}.filter{it.str("senderId")!=vm.user.value?.str("id")}.map{it.str("id")}.filter{it.isNotBlank()};if(unread.isNotEmpty())runCatching{ApiClient.request("conversations/$id/read",HttpMethod.Post,buildJsonObject{put("messageIds",buildJsonArray{unread.forEach{add(it)}})})}}
     fun upload(file:File){vm.runTask{ApiClient.upload("conversations/$id/images",file);load()}}
+    var quickieCaptureFile by remember { mutableStateOf<File?>(null) }
+    fun sendCapturedQuickie(saved:Boolean) {
+        val file=quickieCaptureFile
+        quickieCaptureFile=null
+        if(saved && file!=null && file.length()>0L)vm.runTask {
+            try {
+                val maxBytes=if(file.extension=="mp4")30L*1024*1024 else 8L*1024*1024
+                if(file.length()>maxBytes)error("Quickie is too large. Maximum ${if(file.extension=="mp4")"30 MB for video" else "8 MB for photos"}.")
+                ApiClient.upload("conversations/$id/view-once",file,"media")
+                load()
+            }finally { file.delete() }
+        } else file?.delete()
+    }
+    val quickieCameraPhoto=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->sendCapturedQuickie(saved)}
+    val quickieCameraVideo=rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo()){saved->sendCapturedQuickie(saved)}
+    fun captureQuickie(video:Boolean){
+        val dir=File(context.cacheDir,"camera").apply{mkdirs()}
+        val file=File(dir,"quickie-${System.currentTimeMillis()}.${if(video)"mp4" else "jpg"}")
+        quickieCaptureFile=file
+        val uri=FileProvider.getUriForFile(context,"${context.packageName}.files",file)
+        if(video)quickieCameraVideo.launch(uri)else quickieCameraPhoto.launch(uri)
+    }
+    var quickieCaptureVideo by remember { mutableStateOf(false) }
+    val quickieCameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->
+        if(granted)captureQuickie(quickieCaptureVideo)else vm.error.value="Camera permission is required to record a Quickie."
+    }
+    fun startQuickieCapture(video:Boolean){
+        quickiePicker=false
+        quickieCaptureVideo=video
+        if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)captureQuickie(video)
+        else quickieCameraPermission.launch(Manifest.permission.CAMERA)
+    }
     val quickieVideoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val quickiePhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/images");load()}}}
@@ -462,7 +494,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
-    if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Text("One look. Then it\u0027s gone.")},confirmButton={Row{TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Photo")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Video")}}},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
+    if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("One look. Then it\u0027s gone.");TextButton(onClick={startQuickieCapture(false)}){Icon(Icons.Default.PhotoCamera,null);Text(" Take photo")};TextButton(onClick={startQuickieCapture(true)}){Icon(Icons.Default.Videocam,null);Text(" Record video")};HorizontalDivider();TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Choose photo from gallery")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Choose video from gallery")}}},confirmButton={},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
     openedQuickie?.let { media -> QuickieViewer(media){openedQuickie=null} }
 }
 private fun replySnippet(m:JsonObject):String = when {
