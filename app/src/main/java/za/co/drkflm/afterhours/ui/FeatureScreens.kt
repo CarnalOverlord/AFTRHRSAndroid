@@ -245,6 +245,8 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var newGroup by remember{mutableStateOf(false)}
     var deleteTarget by remember{mutableStateOf<JsonObject?>(null)}
     var deleting by remember{mutableStateOf(false)}
+    var deleteScope by remember{mutableStateOf("me")}
+    val isPremium=vm.user.value?.str("subscription")=="PREMIUM" || vm.user.value?.str("role")=="ADMIN"
     suspend fun load(){items=ApiClient.request(if(tab==0)"conversations" else "group-chats").jsonArray;vm.refreshUnread()}
     LaunchedEffect(tab){vm.runTask{load()}}
     val inboxRevision = Presence.revision.intValue
@@ -260,7 +262,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         TabRow(tab){Tab(tab==0,{tab=0},text={Text("Direct")});Tab(tab==1,{tab=1},text={Text("Groups")})}
         LazyColumn(Modifier.fillMaxSize()){
             if(items.isEmpty())item{Box(Modifier.fillParentMaxSize().padding(36.dp),contentAlignment=Alignment.Center){Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){Icon(if(tab==0)Icons.Default.ChatBubbleOutline else Icons.Default.Groups,null,tint=Muted,modifier=Modifier.size(72.dp));Text(if(tab==0)"No messages yet"else"No group chats",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Text(if(tab==0)"Start a conversation from a member profile."else"Create a group with two or more mutual matches.",color=Muted,textAlign=androidx.compose.ui.text.style.TextAlign.Center);if(tab==1)ElectricButton({newGroup=true}){Icon(Icons.Default.GroupAdd,null);Text(" Create group")}}}}
-            items(items.size){i->val c=items[i].jsonObject;val other=c["other"]?.jsonObject;ListItem(headlineContent={Text(if(tab==0)other?.str("displayName").orEmpty()else c.str("title"),fontWeight=FontWeight.Bold,color=Color.White)},supportingContent={if(tab==0)Column{Text(conversationPreview(c),maxLines=1,color=Muted);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(7.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.labelSmall)}}else Text(c.array("members").joinToString(", "){it.jsonObject.str("name")}.ifBlank{"${c.int("pendingCount")} pending"},maxLines=1,color=Muted)},leadingContent={if(tab==0)Avatar(other?.strOrNull("photo"))else if(!c.strOrNull("photoUrl").isNullOrBlank())Avatar(c.strOrNull("photoUrl"),Modifier.size(52.dp))else Box(Modifier.size(52.dp).background(Electric.copy(alpha=.18f),CircleShape),contentAlignment=Alignment.Center){Icon(Icons.Default.Groups,null,tint=Lavender)}},trailingContent={if(c.int("unreadCount")>0)Badge{Text(c.int("unreadCount").toString())}},colors=ListItemDefaults.colors(containerColor=Color.Transparent),modifier=Modifier.combinedClickable(onClick={chat=c},onLongClick={deleteTarget=c}));if(i<items.lastIndex)HorizontalDivider(modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp),thickness=0.7.dp,color=Electric.copy(alpha=0.24f))}
+            items(items.size){i->val c=items[i].jsonObject;val other=c["other"]?.jsonObject;ListItem(headlineContent={Text(if(tab==0)other?.str("displayName").orEmpty()else c.str("title"),fontWeight=FontWeight.Bold,color=Color.White)},supportingContent={if(tab==0)Column{Text(conversationPreview(c),maxLines=1,color=Muted);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(7.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.labelSmall)}}else Text(c.array("members").joinToString(", "){it.jsonObject.str("name")}.ifBlank{"${c.int("pendingCount")} pending"},maxLines=1,color=Muted)},leadingContent={if(tab==0)Avatar(other?.strOrNull("photo"))else if(!c.strOrNull("photoUrl").isNullOrBlank())Avatar(c.strOrNull("photoUrl"),Modifier.size(52.dp))else Box(Modifier.size(52.dp).background(Electric.copy(alpha=.18f),CircleShape),contentAlignment=Alignment.Center){Icon(Icons.Default.Groups,null,tint=Lavender)}},trailingContent={if(c.int("unreadCount")>0)Badge{Text(c.int("unreadCount").toString())}},colors=ListItemDefaults.colors(containerColor=Color.Transparent),modifier=Modifier.combinedClickable(onClick={chat=c},onLongClick={deleteScope="me";deleteTarget=c}));if(i<items.lastIndex)HorizontalDivider(modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp),thickness=0.7.dp,color=Electric.copy(alpha=0.24f))}
         }
     }
     deleteTarget?.let{target->
@@ -268,18 +270,35 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         AlertDialog(
             onDismissRequest={if(!deleting)deleteTarget=null},
             title={Text(if(isGroup)"Leave group chat?" else "Delete conversation?")},
-            text={Text(if(isGroup)"This will leave the group and remove it from your chats. Other participants can continue chatting." else "This removes the conversation from your chat list only. The other person will still have their messages.")},
+            text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+                if(isGroup)Text("This will leave the group and remove it from your chats. Other participants can continue chatting.")
+                else {
+                    Text("Choose who this conversation is deleted for:")
+                    Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth().clickable{deleteScope="me"}){
+                        RadioButton(selected=deleteScope=="me",onClick={deleteScope="me"})
+                        Text("Delete for me")
+                    }
+                    Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth().clickable{if(isPremium)deleteScope="everyone"}){
+                        RadioButton(selected=deleteScope=="everyone",onClick={deleteScope="everyone"},enabled=isPremium)
+                        Column{
+                            Text("Delete for both parties")
+                            if(!isPremium)Text("Premium only",color=Lavender,style=MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Text(if(deleteScope=="everyone")"Permanently deletes the conversation for both people. This cannot be undone." else "Removes the conversation from your chat list. The other person keeps their copy.",color=Muted,style=MaterialTheme.typography.bodySmall)
+                }
+            }},
             confirmButton={TextButton(onClick={
                 if(!deleting)vm.runTask{
                     deleting=true
                     try{
                         if(isGroup)ApiClient.request("group-chats/${target.str("id")}/leave",HttpMethod.Post)
-                        else ApiClient.request("conversations/${target.str("id")}?scope=me",HttpMethod.Delete)
+                        else ApiClient.request("conversations/${target.str("id")}?scope=$deleteScope",HttpMethod.Delete)
                         deleteTarget=null
                         load()
                     }finally{deleting=false}
                 }
-            },enabled=!deleting){Text(if(isGroup)"Leave group" else "Delete chat",color=Color(0xFFFF777E))}},
+            },enabled=!deleting){Text(if(isGroup)"Leave group" else if(deleteScope=="everyone")"Delete for both" else "Delete for me",color=Color(0xFFFF777E))}},
             dismissButton={TextButton({deleteTarget=null},enabled=!deleting){Text("Cancel")}}
         )
     }
