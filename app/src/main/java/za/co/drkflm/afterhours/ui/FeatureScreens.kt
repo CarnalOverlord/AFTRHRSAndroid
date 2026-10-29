@@ -410,7 +410,16 @@ private fun replySnippet(m:JsonObject):String = when {
                         Text(if(valid)"Tap to open in Maps" else "Location unavailable",color=Lavender)
                     }
                 }
-                kind=="IMAGE"||kind=="GIF" -> AsyncImage(authenticatedImageModel(body),"Chat image",Modifier.fillMaxWidth().heightIn(min=120.dp,max=320.dp).clip(RoundedCornerShape(12.dp)),contentScale=ContentScale.Fit)
+                kind=="IMAGE"||kind=="GIF" -> {
+                    var fullScreen by remember(body){mutableStateOf(false)}
+                    AsyncImage(authenticatedImageModel(body),"Chat image",Modifier.fillMaxWidth().heightIn(min=120.dp,max=320.dp).clip(RoundedCornerShape(12.dp)).clickable{fullScreen=true},contentScale=ContentScale.Fit)
+                    if(fullScreen) androidx.compose.ui.window.Dialog(onDismissRequest={fullScreen=false},properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false)){
+                        Box(Modifier.fillMaxSize().background(Color.Black),contentAlignment=Alignment.Center){
+                            AsyncImage(authenticatedImageModel(body),"Full size chat image",Modifier.fillMaxSize(),contentScale=ContentScale.Fit)
+                            IconButton({fullScreen=false},Modifier.align(Alignment.TopEnd).padding(16.dp)){Icon(Icons.Default.Close,"Close image",tint=Color.White)}
+                        }
+                    }
+                }
                 kind=="VIDEO" -> Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PlayCircle,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Video received · Tap to view",color=Color.White)}
                 kind=="GALLERY"||body.startsWith("GALLERY_SHARE:") -> Column(Modifier.clickable{body.substringAfter("GALLERY_SHARE:").takeIf{it.isNotBlank()}?.let(openGallery)}){
                     Text("Private gallery shared",color=Color.White,fontWeight=FontWeight.SemiBold)
