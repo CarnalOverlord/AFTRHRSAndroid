@@ -339,6 +339,27 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val chatRevision = Presence.revision.intValue
     LaunchedEffect(id,chatRevision) { if(chatRevision>0) runCatching { other=ApiClient.request("conversations").jsonArray.firstOrNull { it.jsonObject.str("id")==id }?.jsonObject?.objectOrNull("other") ?: other } }
     LaunchedEffect(id) { while(true) { delay(30_000); runCatching { other=ApiClient.request("conversations").jsonArray.firstOrNull { it.jsonObject.str("id")==id }?.jsonObject?.objectOrNull("other") ?: other } } }
+    val typingEventRevision=Presence.typingRevision.intValue
+    var remoteTyping by remember(id){mutableStateOf(false)}
+    var typingDots by remember(id){mutableIntStateOf(1)}
+    LaunchedEffect(id,typingEventRevision){
+        remoteTyping=Presence.typingConversation.value==id
+        if(remoteTyping){
+            delay(3_500)
+            remoteTyping=false
+        }
+    }
+    LaunchedEffect(id,remoteTyping){
+        while(remoteTyping){delay(420);typingDots=typingDots%3+1}
+    }
+    LaunchedEffect(id,text){
+        if(text.isNotBlank() && !isIncomingRequest){
+            Presence.sendTyping(id,true)
+            delay(1_600)
+            Presence.sendTyping(id,false)
+        }else Presence.sendTyping(id,false)
+    }
+    DisposableEffect(id){onDispose{Presence.sendTyping(id,false)}}
     var messages by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))}
     var viewedProfile by remember{mutableStateOf<String?>(null)}
     var text by remember{mutableStateOf("")}
@@ -471,6 +492,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 IconButton({replyingTo=null}){Icon(Icons.Default.Close,"Cancel reply",tint=Muted)}
             }
         }
+        if(remoteTyping) Text("Typing"+ ".".repeat(typingDots),color=Lavender,style=MaterialTheme.typography.labelMedium,modifier=Modifier.padding(start=18.dp,bottom=4.dp))
         if(!isIncomingRequest){
         Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton({attach=true}){Icon(Icons.Default.AddCircle,"Attachments",tint=Lavender)}
