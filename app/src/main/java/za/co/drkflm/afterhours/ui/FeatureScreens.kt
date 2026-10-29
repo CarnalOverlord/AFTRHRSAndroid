@@ -9,6 +9,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.app.Activity
+import android.view.WindowManager
+import android.view.WindowManager.SCREEN_RECORDING_STATE_VISIBLE
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.Executor
+import java.util.function.Consumer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
@@ -339,7 +346,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     }
     if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
-    openedGallery?.let{SharedGalleryViewer(it){openedGallery=null}}
+    openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
     if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Text("One look. Then it\u0027s gone.")},confirmButton={Row{TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Photo")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Video")}}},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
     openedQuickie?.let { media -> QuickieViewer(media){openedQuickie=null} }
 }
@@ -441,7 +448,46 @@ private fun replySnippet(m:JsonObject):String = when {
     }
 }
 
-@Composable private fun SharedGalleryViewer(gallery:JsonObject,dismiss:()->Unit){ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=800.dp).padding(horizontal=18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(gallery.strOrNull("title")?:"Private gallery",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);val photos=gallery.array("photos");if(photos.isEmpty())Box(Modifier.fillMaxWidth().height(240.dp),contentAlignment=Alignment.Center){Text("This gallery has no photos.",color=Muted)}else LazyColumn(Modifier.heightIn(max=620.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(photos.size){index->AsyncImage(authenticatedImageModel(photos[index].jsonObject.strOrNull("url")),"Gallery photo",Modifier.fillMaxWidth().heightIn(min=260.dp,max=560.dp).clip(RoundedCornerShape(18.dp)).background(Raised),contentScale=ContentScale.Fit)}};OutlinedButton(dismiss,Modifier.fillMaxWidth()){Text("Done")};Spacer(Modifier.height(20.dp))}}}
+@Composable private fun SharedGalleryViewer(gallery:JsonObject,vm:AppViewModel,dismiss:()->Unit){
+    val context=LocalContext.current
+    val activity=context as? Activity
+    val galleryId=gallery.str("id")
+    val scope=rememberCoroutineScope()
+    var captureHandled by remember(galleryId){mutableStateOf(false)}
+    val onCapture=rememberUpdatedState {
+        if(!captureHandled && galleryId.isNotBlank()){
+            captureHandled=true
+            dismiss()
+            scope.launch {
+                runCatching {
+                    ApiClient.request("private-galleries/$galleryId/screenshot-revoke",HttpMethod.Post,
+                        obj("reason" to "ANDROID_CAPTURE_DETECTED"))
+                }.onFailure { vm.error.value="Gallery closed. Could not confirm access revocation; please check your connection." }
+            }
+        }
+    }
+    // Detection is best-effort: FLAG_SECURE remains enabled and can suppress
+    // screenshot callbacks. Never disable capture prevention to force detection.
+    DisposableEffect(activity,galleryId) {
+        if(activity==null || galleryId.isBlank()) return@DisposableEffect onDispose {}
+        val executor=Executor { task -> Handler(Looper.getMainLooper()).post(task) }
+        val screenshotCallback=if(Build.VERSION.SDK_INT>=34) {
+            val callback=Activity.ScreenCaptureCallback { onCapture.value.invoke() }
+            runCatching { activity.registerScreenCaptureCallback(executor,callback) }.getOrNull()?.let { callback }
+        } else null
+        val windowManager=activity.getSystemService(WindowManager::class.java)
+        val recordingCallback=if(Build.VERSION.SDK_INT>=35 && windowManager!=null) {
+            val callback=Consumer<Int> { state ->
+                if(state==SCREEN_RECORDING_STATE_VISIBLE) onCapture.value.invoke()
+            }
+            runCatching { windowManager.addScreenRecordingCallback(executor,callback) }.getOrNull()?.let { callback }
+        } else null
+        onDispose {
+            if(Build.VERSION.SDK_INT>=34 && screenshotCallback!=null) runCatching { activity.unregisterScreenCaptureCallback(screenshotCallback) }
+            if(Build.VERSION.SDK_INT>=35 && recordingCallback!=null) runCatching { windowManager?.removeScreenRecordingCallback(recordingCallback) }
+        }
+    }
+ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=800.dp).padding(horizontal=18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(gallery.strOrNull("title")?:"Private gallery",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);val photos=gallery.array("photos");if(photos.isEmpty())Box(Modifier.fillMaxWidth().height(240.dp),contentAlignment=Alignment.Center){Text("This gallery has no photos.",color=Muted)}else LazyColumn(Modifier.heightIn(max=620.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(photos.size){index->AsyncImage(authenticatedImageModel(photos[index].jsonObject.strOrNull("url")),"Gallery photo",Modifier.fillMaxWidth().heightIn(min=260.dp,max=560.dp).clip(RoundedCornerShape(18.dp)).background(Raised),contentScale=ContentScale.Fit)}};OutlinedButton(dismiss,Modifier.fillMaxWidth()){Text("Done")};Spacer(Modifier.height(20.dp))}}}
 
 @Composable private fun AttachmentSheet(dismiss:()->Unit,vm:AppViewModel,send:(String)->Unit,camera:()->Unit,photo:()->Unit,privateGallery:()->Unit,quickie:()->Unit){
     val context=LocalContext.current
