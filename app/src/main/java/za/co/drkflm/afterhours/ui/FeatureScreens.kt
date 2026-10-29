@@ -20,6 +20,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.CircleShape
@@ -492,7 +493,7 @@ private fun replySnippet(m:JsonObject):String = when {
                     Text("Private gallery shared",color=Color.White,fontWeight=FontWeight.SemiBold)
                     Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)
                 }
-                else -> ChatLinkPreview(body)
+                else -> SelectionContainer { ChatLinkPreview(body) }
             }
         }
     }
@@ -726,7 +727,7 @@ private val groupBubblePalette = listOf(
                                 when{
                                     m.bool("viewOnce")->Text(if(mine)"Quickie 😈 sent" else "Quickie 😈 · View once",color=Color.White)
                                     m.str("kind") in setOf("IMAGE","GIF")->AsyncImage(authenticatedImageModel(m.strOrNull("body")),"Group photo",Modifier.fillMaxWidth().height(220.dp),contentScale=ContentScale.Fit)
-                                    else->Text(m.str("body"),color=Color.White)
+                                    else->SelectionContainer { Text(m.str("body"),color=Color.White) }
                                 }
                             }
                         }
