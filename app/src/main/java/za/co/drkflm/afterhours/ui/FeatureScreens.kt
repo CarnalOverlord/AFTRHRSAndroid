@@ -648,7 +648,7 @@ ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.
         Spacer(Modifier.height(14.dp))
     }}
 }
-private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:String="image"){
+private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:String="image"):JsonElement{
     val mime=context.contentResolver.getType(uri)?.lowercase()?.substringBefore(";").orEmpty()
     val extension=android.webkit.MimeTypeMap.getFileExtensionFromUrl(uri.toString()).lowercase()
     val type=when {
@@ -676,7 +676,7 @@ private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:
             val maxBytes=if(type.startsWith("video/"))30L*1024*1024 else 8L*1024*1024
             if(file.length()>maxBytes) error("Quickie is too large. Maximum ${if(type.startsWith("video/"))"30 MB for video" else "8 MB for photos"}.")
         }
-        ApiClient.upload(path,file,field)
+        return ApiClient.upload(path,file,field)
     } finally { file.delete() }
 }
 @Composable private fun PrivateGalleryPicker(vm:AppViewModel,dismiss:()->Unit,select:(JsonObject)->Unit){var galleries by remember{mutableStateOf<JsonArray?>(null)};LaunchedEffect(Unit){vm.runTask{val response=ApiClient.request("private-galleries");galleries=if(response is JsonArray)response else response.jsonObject.array("items")}};AlertDialog(dismiss,title={Text("Share a private gallery")},text={LazyColumn(Modifier.heightIn(max=420.dp)){val items=galleries;if(items==null)item{CircularProgressIndicator()}else if(items.isEmpty())item{Text("You do not have a private gallery to share yet.",color=Muted)}else items(items.size){index->val gallery=items[index].jsonObject;ListItem(headlineContent={Text(gallery.strOrNull("title")?:gallery.strOrNull("name")?:"Private gallery")},supportingContent={Text("${gallery.array("photos").size} photos")},leadingContent={Icon(Icons.Default.Collections,null,tint=Lavender)},modifier=Modifier.clickable{select(gallery)})}}},confirmButton={TextButton(dismiss){Text("Cancel")}})}
@@ -708,9 +708,10 @@ private val groupBubblePalette = listOf(
         if(uri!=null)vm.runTask{
             savingGroup=true
             try{
-                uploadFileFromUri(context,uri,"group-chats/$id/photo","photo")
+                val uploaded=uploadFileFromUri(context,uri,"group-chats/$id/photo","photo")
                 val latest=ApiClient.request("group-chats").jsonArray.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject
-                groupPhoto=latest?.strOrNull("photoUrl")
+                groupPhoto=latest?.strOrNull("photoUrl") ?: uploaded.jsonObject.strOrNull("photoUrl")
+                if(groupPhoto.isNullOrBlank())error("The photo was uploaded, but the group picture was not returned. Please try again.")
             }finally{savingGroup=false}
         }
     }
