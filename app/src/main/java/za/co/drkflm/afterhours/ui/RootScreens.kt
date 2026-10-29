@@ -105,6 +105,7 @@ private val verificationSteps=listOf(VerificationStep("ID_FRONT","id-front","Fro
 @Composable
 private fun MainTabs(vm: AppViewModel, lockEnabled: Boolean, setLock: (Boolean) -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
+    var chatsReselect by remember { mutableIntStateOf(0) }
     LaunchedEffect(vm.pendingConversation.value, vm.pendingGroup.value) {
         if (vm.pendingConversation.value != null || vm.pendingGroup.value != null) tab = 2
     }
@@ -142,7 +143,7 @@ private fun MainTabs(vm: AppViewModel, lockEnabled: Boolean, setLock: (Boolean) 
                                 else androidx.compose.ui.graphics.Color.Transparent,
                                 androidx.compose.foundation.shape.RoundedCornerShape(30.dp)
                             )
-                            .clickable { tab = index }
+                            .clickable { if (index == 2 && tab == 2) chatsReselect++ else tab = index }
                             .padding(vertical = 9.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -176,7 +177,7 @@ private fun MainTabs(vm: AppViewModel, lockEnabled: Boolean, setLock: (Boolean) 
             when (tab) {
                 0 -> DiscoverScreen(vm)
                 1 -> LikesScreen(vm)
-                2 -> InboxScreen(vm)
+                2 -> InboxScreen(vm, chatsReselect)
                 3 -> PremiumScreen(vm)
                 else -> MeScreen(vm, lockEnabled, setLock)
             }
