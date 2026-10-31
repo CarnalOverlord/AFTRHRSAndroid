@@ -130,6 +130,7 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
         Column(Modifier.matchParentSize().padding(9.dp)){
             Spacer(Modifier.weight(1f))
             Text("${p.str("displayName")}${p["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,color=Color.White,style=MaterialTheme.typography.titleMedium)
+            p.strOrNull("distance").visibleProfileValue()?.let{Text(it,color=Color.White,style=MaterialTheme.typography.labelSmall,maxLines=1)}
             if(position!=null||status!=null)Row(Modifier.padding(top=5.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){position?.let{GridChip(it,positionGlyph(it))};status?.let{GridChip(it,if(it=="Cut")"✂" else "○")}}
         }
     }
@@ -439,7 +440,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             IconButton(back){Icon(Icons.Default.ArrowBack,"Back",tint=Color.White)}
             Avatar(other?.strOrNull("photo"),Modifier.size(46.dp).clickable { viewedProfile=other?.strOrNull("userId")?:other?.strOrNull("id") })
             Spacer(Modifier.width(12.dp))
-            Column{Text(other?.str("displayName")?:"Chat",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){Box(Modifier.size(8.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.bodySmall)}}
+            Column{Text(other?.str("displayName")?:"Chat",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);other?.strOrNull("distance").visibleProfileValue()?.let{Text(it,color=Lavender,style=MaterialTheme.typography.bodySmall)};Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){Box(Modifier.size(8.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.bodySmall)}}
         }
         if(isIncomingRequest){
             Column(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=8.dp).background(Raised,RoundedCornerShape(14.dp)).padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
