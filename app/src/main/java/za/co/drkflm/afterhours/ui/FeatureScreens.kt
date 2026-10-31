@@ -269,8 +269,13 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var deleteTarget by remember{mutableStateOf<JsonObject?>(null)}
     var deleting by remember{mutableStateOf(false)}
     var deleteScope by remember{mutableStateOf("me")}
-    val isPremium=vm.user.value?.str("subscription")=="PREMIUM" || vm.user.value?.str("role")=="ADMIN"
-    suspend fun load(){items=ApiClient.request(if(tab==0)"conversations" else "group-chats").jsonArray;vm.refreshUnread()}
+    var canDeleteForEveryone by remember { mutableStateOf(false) }
+    suspend fun refreshEntitlements(){
+        val subscription=ApiClient.request("subscription").jsonObject
+        canDeleteForEveryone=subscription.objectOrNull("entitlements")?.bool("deleteConversationForEveryone")==true
+        if(!canDeleteForEveryone && deleteScope=="everyone")deleteScope="me"
+    }
+    suspend fun load(){items=ApiClient.request(if(tab==0)"conversations" else "group-chats").jsonArray;vm.refreshUnread();runCatching{refreshEntitlements()}}
     LaunchedEffect(tab){vm.runTask{load()}}
     val inboxRevision = Presence.revision.intValue
     LaunchedEffect(tab,inboxRevision) { if(inboxRevision>0) runCatching { load() } }
@@ -301,11 +306,11 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                         RadioButton(selected=deleteScope=="me",onClick={deleteScope="me"})
                         Text("Delete for me")
                     }
-                    Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth().clickable{if(isPremium)deleteScope="everyone"}){
-                        RadioButton(selected=deleteScope=="everyone",onClick={deleteScope="everyone"},enabled=isPremium)
+                    Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth().clickable{if(canDeleteForEveryone)deleteScope="everyone"}){
+                        RadioButton(selected=deleteScope=="everyone",onClick={deleteScope="everyone"},enabled=canDeleteForEveryone)
                         Column{
                             Text("Delete for both parties")
-                            if(!isPremium)Text("Premium only",color=Lavender,style=MaterialTheme.typography.labelSmall)
+                            if(!canDeleteForEveryone)Text("Premium only",color=Lavender,style=MaterialTheme.typography.labelSmall)
                         }
                     }
                     Text(if(deleteScope=="everyone")"Permanently deletes the conversation for both people. This cannot be undone." else "Removes the conversation from your chat list. The other person keeps their copy.",color=Muted,style=MaterialTheme.typography.bodySmall)
