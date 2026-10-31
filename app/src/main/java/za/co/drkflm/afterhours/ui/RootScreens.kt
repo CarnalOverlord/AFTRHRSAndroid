@@ -47,7 +47,6 @@ import za.co.drkflm.afterhours.data.obj
 import java.io.File
 import java.time.LocalDate
 import kotlin.coroutines.resume
-import za.co.drkflm.afterhours.data.obj
 
 @Composable fun AftrhrsRoot(vm: AppViewModel, locked: Boolean, authenticating: Boolean, authError: String?, lockEnabled: Boolean, unlock: () -> Unit, setLock: (Boolean) -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
