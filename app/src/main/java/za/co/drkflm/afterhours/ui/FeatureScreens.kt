@@ -714,6 +714,7 @@ private fun replySnippet(m:JsonObject):String = when {
                     }
                 }
             }
+            Text(chatMessageTimestamp(m.str("createdAt")), color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
             if(mine){
                 val read = canSeeReadReceipts && m.array("reads").isNotEmpty()
                 Text(
@@ -981,6 +982,7 @@ private val groupBubblePalette = listOf(
                                     else->SelectionContainer { Text(m.str("body"),color=Color.White) }
                                 }
                             }
+                            Text(chatMessageTimestamp(m.str("createdAt")), color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
                             if(mine) Text("✓ Delivered", color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
                         }
                     }
@@ -1297,3 +1299,9 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
     }
     opened?.let{SharedGalleryViewer(it,vm){opened=null}}
 }
+
+private fun chatMessageTimestamp(raw:String):String = runCatching {
+    val date=java.time.Instant.parse(raw)
+    java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm",java.util.Locale.getDefault())
+        .withZone(java.time.ZoneId.systemDefault()).format(date)
+}.getOrElse { raw }
