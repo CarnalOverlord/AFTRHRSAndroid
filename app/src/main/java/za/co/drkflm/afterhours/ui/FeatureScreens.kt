@@ -92,14 +92,13 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     var radius by remember { mutableFloatStateOf(25f) }
     var radiusMax by remember { mutableIntStateOf(25) }
     var advanced by remember { mutableStateOf(false) }
-    var serverEntitlements by remember { mutableStateOf<JsonObject?>(null) }
+    val serverEntitlements = vm.entitlements.value
     var criteria by remember { mutableStateOf(DiscoveryFilters()) }
     fun load(targetRadius:Float=radius,targetCriteria:DiscoveryFilters=criteria) { vm.runTask { loading=true;try{items=ApiClient.request(discoveryPath(targetRadius.toInt(),targetCriteria,advanced)).jsonObject.array("items")}finally{loading=false} } }
     var savingRadius by remember { mutableStateOf(false) }
     suspend fun syncRadius() {
         if (savingRadius) return
         val config = ApiClient.request("discovery/filters").jsonObject
-        serverEntitlements = runCatching { ApiClient.request("subscription").jsonObject.objectOrNull("entitlements") }.getOrNull()
         advanced = serverEntitlements?.bool("advancedFilters") ?: config.bool("advanced")
         radiusMax = if (serverEntitlements?.bool("unlimitedDiscoveryRadius") == true) 20000 else 25
         val stored = config.objectOrNull("preferences")?.get("radiusKm")?.jsonPrimitive?.floatOrNull
@@ -273,8 +272,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var deleteScope by remember{mutableStateOf("me")}
     var canDeleteForEveryone by remember { mutableStateOf(false) }
     suspend fun refreshEntitlements(){
-        val subscription=ApiClient.request("subscription").jsonObject
-        canDeleteForEveryone=subscription.objectOrNull("entitlements")?.bool("deleteConversationForEveryone")==true
+        canDeleteForEveryone=vm.entitlements.value?.bool("deleteConversationForEveryone")==true
         if(!canDeleteForEveryone && deleteScope=="everyone")deleteScope="me"
     }
     suspend fun load(){items=ApiClient.request(if(tab==0)"conversations" else "group-chats").jsonArray;vm.refreshUnread();runCatching{refreshEntitlements()}}
@@ -1092,8 +1090,8 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
     val user=vm.user.value
     val preference=user?.objectOrNull("preference")
     var canBrowsePrivately by remember { mutableStateOf(false) }
-    LaunchedEffect(user?.str("subscription")) {
-        canBrowsePrivately = runCatching { ApiClient.request("subscription").jsonObject.objectOrNull("entitlements")?.bool("privateProfileViewing") == true }.getOrDefault(false)
+    LaunchedEffect(vm.entitlements.value) {
+        canBrowsePrivately = vm.entitlements.value?.bool("privateProfileViewing") == true
     }
     fun initial(key:String,default:Boolean)=preference?.get(key)?.jsonPrimitive?.booleanOrNull?:default
     var showAge by remember{mutableStateOf(initial("showAge",true))};var showPosition by remember{mutableStateOf(initial("showPosition",true))};var hideOnline by remember{mutableStateOf(initial("hideOnline",false))};var hideDistance by remember{mutableStateOf(initial("hideDistance",false))};var pauseDiscovery by remember{mutableStateOf(initial("pauseDiscovery",false))};var browsePrivately by remember{mutableStateOf(initial("browsePrivately",false))};var markChatted by remember{mutableStateOf(initial("markChattedOnGrid",true))};var showUnread by remember{mutableStateOf(initial("showGridMessageCount",true))};var allowRequests by remember{mutableStateOf(initial("allowRequests",true))};var readReceipts by remember{mutableStateOf(initial("allowReadReceipts",true))};var notifications by remember{mutableStateOf(initial("notifications",true))};var preview by remember{mutableStateOf(preference?.strOrNull("notificationPreview")?:"PRIVATE")};var saving by remember{mutableStateOf(false)}
@@ -1122,7 +1120,7 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
     var height by remember{mutableStateOf(profile?.get("heightCm")?.jsonPrimitive?.intOrNull?.toString().orEmpty())};var weight by remember{mutableStateOf(profile?.get("weightKg")?.jsonPrimitive?.intOrNull?.toString().orEmpty())};var hivStatus by remember{mutableStateOf(profile?.strOrNull("hivStatus")?:"Do not show")};var hivDate by remember{mutableStateOf(profile?.strOrNull("hivLastTestDate")?.take(10).orEmpty())};var prep by remember{mutableStateOf(profile?.strOrNull("prepStatus").orEmpty())};var visible by remember{mutableStateOf(profile?.get("visible")?.jsonPrimitive?.booleanOrNull?:true)}
     val social=profile?.objectOrNull("socialLinks");var instagram by remember{mutableStateOf(social?.strOrNull("instagram").orEmpty())};var facebook by remember{mutableStateOf(social?.strOrNull("facebook").orEmpty())};var tiktok by remember{mutableStateOf(social?.strOrNull("tiktok").orEmpty())};var xLink by remember{mutableStateOf(social?.strOrNull("x").orEmpty())};var snapchat by remember{mutableStateOf(social?.strOrNull("snapchat").orEmpty())};var website by remember{mutableStateOf(social?.strOrNull("website").orEmpty())};var saving by remember{mutableStateOf(false)}
     val context=LocalContext.current
-    val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty())vm.runTask{try{val limit=runCatching{ApiClient.request("subscription").jsonObject.objectOrNull("entitlements")?.int("maxProfilePhotos")}.getOrNull()?:5;require(uris.size+photos.size<=limit){"Your plan allows $limit profile photos. Select up to ${(limit-photos.size).coerceAtLeast(0)} more."};uris.forEach{uploadFileFromUri(context,it,"profiles/photos","photo")}}finally{vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}}}
+    val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty())vm.runTask{try{val limit=vm.entitlements.value?.int("maxProfilePhotos")?:5;require(uris.size+photos.size<=limit){"Your plan allows $limit profile photos. Select up to ${(limit-photos.size).coerceAtLeast(0)} more."};uris.forEach{uploadFileFromUri(context,it,"profiles/photos","photo")}}finally{vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}}}
     fun makePrimary(photo:JsonObject){photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/${photo.str("id")}/primary",HttpMethod.Patch);vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}}
     fun movePhoto(from:Int,to:Int){if(to !in photos.indices||from==to)return;val next=photos.toMutableList().apply{add(to,removeAt(from))};photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/reorder",HttpMethod.Patch,buildJsonObject{put("photoIds",buildJsonArray{next.forEach{add(it.jsonObject.str("id"))}})});vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}}
     val genderOptions=listOf("Male","Cis Male","Trans Male","Non-Binary","Man","Woman","Non-binary","Not specified");val intentionOptions=listOf("Friends","Networking","Fun","Relationship","The Love of My Life","DL");val pronounOptions=listOf("He/Him/His","She/Her/Hers","They/Them/Theirs","Ze/Hir/Hirs","Ze/Zir/Zirs","Use my name only","Ask me","Prefer not to say");val tribeOptions=listOf("Bear","Clean Cut","Daddy","Discreet","Geek","Interracial","Jock","Leather","Otter","Poz","Rugged","Trans","Twink","Sober");val kinkOptions=listOf("Group","Couples","One on One","Oral Only","Threesomes","Public","BDSM","Slave/Master","Toy Fun")
