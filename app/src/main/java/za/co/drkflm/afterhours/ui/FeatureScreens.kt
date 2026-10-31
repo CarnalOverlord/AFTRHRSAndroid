@@ -497,7 +497,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 MessageBubble(
                     messages[i].jsonObject,
                     vm.user.value?.str("id"),
-                    canSeeReadReceipts = true, // Server returns reads only when entitled and permitted by recipient privacy.
+                    canSeeReadReceipts = vm.entitlements.value?.bool("readReceipts") == true, // Server also filters reads by entitlement and recipient privacy.
                     openGallery = { galleryId ->
                         vm.runTask {
                             openedGallery = ApiClient.request("private-galleries/$galleryId/view").jsonObject
