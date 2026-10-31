@@ -395,6 +395,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     BackHandler(onBack=back)
     val context=LocalContext.current
     val id=c.str("id")
+    val creatorAnnouncement=c.bool("systemAnnouncement")
     var other by remember(c.str("id")) { mutableStateOf(c.objectOrNull("other")) }
     var requestStatus by remember(id){mutableStateOf(c.str("status"))}
     var requesterId by remember(id){mutableStateOf(c.str("requestedById"))}
@@ -422,7 +423,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         while(remoteTyping){delay(420);typingDots=typingDots%3+1}
     }
     LaunchedEffect(id,text){
-        if(text.isNotBlank() && !isIncomingRequest){
+        if(text.isNotBlank() && !isIncomingRequest && !creatorAnnouncement){
             Presence.sendTyping(id,true)
             delay(1_600)
             Presence.sendTyping(id,false)
@@ -568,8 +569,10 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 IconButton({replyingTo=null}){Icon(Icons.Default.Close,"Cancel reply",tint=Muted)}
             }
         }
-        if(remoteTyping) Text("Typing"+ ".".repeat(typingDots),color=Lavender,style=MaterialTheme.typography.labelMedium,modifier=Modifier.padding(start=18.dp,bottom=4.dp))
-        if(!isIncomingRequest){
+        if(!creatorAnnouncement && remoteTyping) Text("Typing"+ ".".repeat(typingDots),color=Lavender,style=MaterialTheme.typography.labelMedium,modifier=Modifier.padding(start=18.dp,bottom=4.dp))
+        if(creatorAnnouncement){
+            Text("The Creator announcement · Read only",color=Lavender,modifier=Modifier.padding(16.dp))
+        }else if(!isIncomingRequest){
         Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton({attach=true}){Icon(Icons.Default.AddCircle,"Attachments",tint=Lavender)}
             OutlinedTextField(text,{text=it},Modifier.weight(1f),placeholder={Text("Message",color=Muted)})
