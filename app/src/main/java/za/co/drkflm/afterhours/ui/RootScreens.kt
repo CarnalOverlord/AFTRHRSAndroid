@@ -22,6 +22,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import za.co.drkflm.afterhours.data.Presence
 import androidx.compose.ui.Alignment
@@ -88,14 +89,45 @@ import java.time.LocalDate
 
 @Composable private fun AuthScreen(vm: AppViewModel) {
     var join by remember { mutableStateOf(false) }; var email by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var name by remember { mutableStateOf("") }; var birth by remember { mutableStateOf(LocalDate.now().minusYears(25).toString()) }; var consent by remember { mutableStateOf(false) }
+    var recovering by remember { mutableStateOf(false) }
+    var recoveryEmail by remember { mutableStateOf("") }
+    var recoveryBusy by remember { mutableStateOf(false) }
+    var recoverySent by remember { mutableStateOf(false) }
+    var recoveryError by remember { mutableStateOf<String?>(null) }
+    val recoveryScope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment=Alignment.CenterHorizontally) {
         Spacer(Modifier.height(32.dp)); Image(painterResource(R.drawable.wordmark), "AFTRHRS", Modifier.fillMaxWidth().height(120.dp), contentScale=ContentScale.Fit); Text("The night starts here.", color=Lavender, style=MaterialTheme.typography.titleLarge); Spacer(Modifier.height(24.dp))
+        if (recovering) {
+            Text("Reset your password", style=MaterialTheme.typography.titleLarge, fontWeight=FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            Text("Enter your account email. If an active account exists, we'll send a secure password reset link. The link expires after 30 minutes.", color=Muted, textAlign=TextAlign.Center)
+            Spacer(Modifier.height(16.dp))
+            OutlinedTextField(recoveryEmail, { recoveryEmail=it; recoveryError=null }, label={Text("Email address")}, singleLine=true, modifier=Modifier.fillMaxWidth())
+            recoveryError?.let { Text(it, color=MaterialTheme.colorScheme.error, modifier=Modifier.padding(top=8.dp)) }
+            if (recoverySent) Text("If an active account exists for that address, check your inbox for a reset link. Also check your spam folder.", color=Lavender, modifier=Modifier.padding(top=12.dp))
+            Spacer(Modifier.height(16.dp))
+            NeonButton(if (recoveryBusy) "Sending…" else "Send reset link", !recoveryBusy && android.util.Patterns.EMAIL_ADDRESS.matcher(recoveryEmail.trim()).matches()) {
+                recoveryBusy=true
+                recoveryError=null
+                recoveryScope.launch {
+                    try {
+                        ApiClient.request("auth/password/forgot", HttpMethod.Post, obj("email" to recoveryEmail.trim()))
+                        recoverySent=true
+                    } catch (e: Exception) {
+                        recoveryError=e.message ?: "Unable to request a reset link. Please try again."
+                    } finally { recoveryBusy=false }
+                }
+            }
+            TextButton(onClick={ recovering=false; recoveryError=null; recoverySent=false }) { Text("Back to sign in") }
+            return@Column
+        }
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) { SegmentedButton(!join,{join=false},SegmentedButtonDefaults.itemShape(0,2)){Text("Sign in")}; SegmentedButton(join,{join=true},SegmentedButtonDefaults.itemShape(1,2)){Text("Join")} }
         Spacer(Modifier.height(18.dp)); Column(Modifier.fillMaxWidth().glassCard(), verticalArrangement=Arrangement.spacedBy(12.dp)) {
             if(join){ OutlinedTextField(name,{name=it},label={Text("Display name")},modifier=Modifier.fillMaxWidth()); OutlinedTextField(birth,{birth=it},label={Text("Date of birth (YYYY-MM-DD)")},modifier=Modifier.fillMaxWidth()) }
             OutlinedTextField(email,{email=it},label={Text("Email")},singleLine=true,modifier=Modifier.fillMaxWidth()); OutlinedTextField(password,{password=it},label={Text("Password")},singleLine=true,visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth())
             if(join) Row(verticalAlignment=Alignment.Top) { Checkbox(consent,{consent=it}); Text("I confirm that I am at least 18 and accept the AFTRHRS End User Licence Agreement.", color=Muted, style=MaterialTheme.typography.bodySmall, modifier=Modifier.padding(top=12.dp)) }
         }
+        if (!join) TextButton(onClick={ recoveryEmail=email; recovering=true; recoverySent=false; recoveryError=null }) { Text("Forgot password?") }
         Spacer(Modifier.height(20.dp)); NeonButton(if(join) "Create account" else "Enter AFTRHRS", email.isNotBlank() && password.length>=8 && (!join || (name.length>=2 && consent))) { if(join) vm.register(email,password,name,"${birth}T00:00:00Z",consent) else vm.login(email,password) }; Spacer(Modifier.height(18.dp)); Text("Adults only · Be real · Be respectful", color=Muted, style=MaterialTheme.typography.bodySmall)
     }
 }
