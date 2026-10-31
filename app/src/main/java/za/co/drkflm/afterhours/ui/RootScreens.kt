@@ -46,9 +46,35 @@ import za.co.drkflm.afterhours.data.ApiClient
 import za.co.drkflm.afterhours.data.obj
 import java.io.File
 import java.time.LocalDate
+import kotlin.coroutines.resume
+import za.co.drkflm.afterhours.data.obj
 
 @Composable fun AftrhrsRoot(vm: AppViewModel, locked: Boolean, authenticating: Boolean, authError: String?, lockEnabled: Boolean, unlock: () -> Unit, setLock: (Boolean) -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        if (grants.values.any { it }) vm.runTask { publishCurrentLocation(context) }
+    }
+    var locationPrompted by remember { mutableStateOf(false) }
+    val signedIn = vm.phase.value == SessionPhase.SignedIn
+    val locationAllowed = signedIn && vm.canEnter && !locked
+    LaunchedEffect(locationAllowed) {
+        if (locationAllowed && !locationPrompted &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            locationPrompted = true
+            locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+        }
+    }
+    LaunchedEffect(lifecycleOwner, locationAllowed) {
+        if (locationAllowed) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                runCatching { publishCurrentLocation(context) }
+                delay(60_000)
+            }
+        }
+    }
+
     val presenceAllowed = vm.phase.value == SessionPhase.SignedIn && vm.canEnter && !locked
     DisposableEffect(lifecycleOwner, presenceAllowed) {
         val observer = LifecycleEventObserver { _, event ->
@@ -350,4 +376,31 @@ private fun MainTabs(vm: AppViewModel, lockEnabled: Boolean, setLock: (Boolean) 
             }
         }
     }
+}
+
+private suspend fun publishCurrentLocation(context: android.content.Context) {
+    val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    if (!fine && !coarse) return
+    val client = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
+    val priority = if (fine) com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        else com.google.android.gms.location.Priority.PRIORITY_LOW_POWER
+    val location = kotlinx.coroutines.suspendCancellableCoroutine<android.location.Location?> { continuation ->
+        val token = com.google.android.gms.tasks.CancellationTokenSource()
+        continuation.invokeOnCancellation { token.cancel() }
+        try {
+            client.getCurrentLocation(priority, token.token)
+                .addOnSuccessListener { if (continuation.isActive) continuation.resume(it) }
+                .addOnFailureListener { if (continuation.isActive) continuation.resumeWith(Result.failure(it)) }
+        } catch (error: SecurityException) {
+            if (continuation.isActive) continuation.resumeWith(Result.failure(error))
+        }
+    } ?: return
+    // Reject invalid coordinates rather than submitting the device's fallback 0,0.
+    if (!(-90.0..90.0).contains(location.latitude) || !(-180.0..180.0).contains(location.longitude)) return
+    ApiClient.request("location/current", HttpMethod.Post, obj(
+        "latitude" to location.latitude,
+        "longitude" to location.longitude,
+        "accuracy" to location.accuracy.toDouble().coerceAtLeast(0.1)
+    ))
 }
