@@ -18,6 +18,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import za.co.drkflm.afterhours.ui.*
@@ -40,6 +42,25 @@ class MainActivity : FragmentActivity() {
         setContent {
             AftrhrsTheme {
                 val vm: AppViewModel = viewModel()
+                val lifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(vm, lifecycleOwner, vm.phase.value) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        when (event) {
+                            Lifecycle.Event.ON_START -> if (vm.phase.value == SessionPhase.SignedIn) vm.startEntitlementMonitoring()
+                            Lifecycle.Event.ON_STOP -> vm.stopEntitlementMonitoring()
+                            else -> Unit
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    if (vm.phase.value == SessionPhase.SignedIn &&
+                        lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                        vm.startEntitlementMonitoring()
+                    }
+                    onDispose {
+                        lifecycleOwner.lifecycle.removeObserver(observer)
+                        vm.stopEntitlementMonitoring()
+                    }
+                }
                 val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
                 LaunchedEffect(vm.phase.value) {
                     if (vm.phase.value == SessionPhase.SignedIn && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {

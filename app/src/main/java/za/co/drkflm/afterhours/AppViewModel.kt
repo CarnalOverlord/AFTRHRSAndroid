@@ -5,7 +5,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.ktor.http.HttpMethod
 import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import io.socket.client.IO
+import io.socket.client.Socket
 import kotlinx.serialization.json.*
 import za.co.drkflm.afterhours.data.*
 import za.co.drkflm.afterhours.push.PushNotifications
@@ -15,6 +21,7 @@ enum class SessionPhase { Loading, SignedOut, SignedIn }
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     var phase = androidx.compose.runtime.mutableStateOf(SessionPhase.Loading); private set
     var user = androidx.compose.runtime.mutableStateOf<JsonObject?>(null); private set
+    var entitlements = androidx.compose.runtime.mutableStateOf<JsonObject?>(null); private set
     var error = androidx.compose.runtime.mutableStateOf<String?>(null)
     var unread = androidx.compose.runtime.mutableIntStateOf(0); private set
     var pendingConversation = androidx.compose.runtime.mutableStateOf<String?>(null)
@@ -25,12 +32,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return u.str("role") in listOf("ADMIN", "SUPER_ADMIN") || u.str("verification") == "APPROVED"
     }
 
+    private val refreshMutex = Mutex()
+    private var sessionGeneration = 0L
+    private var entitlementMonitor: Job? = null
+    private var entitlementSocket: Socket? = null
+    fun startEntitlementMonitoring() {
+        if (entitlementMonitor != null) return
+        entitlementMonitor = viewModelScope.launch {
+            if (phase.value == SessionPhase.SignedIn) runCatching { refresh() }
+            while (true) {
+                delay(30_000)
+                if (phase.value == SessionPhase.SignedIn) runCatching { refresh() }
+            }
+        }
+        if (phase.value == SessionPhase.SignedIn) {
+            runCatching {
+                val options = IO.Options().apply {
+                    path = "/socket.io"
+                    reconnection = true
+                    extraHeaders = mapOf("Cookie" to listOf(Network.cookieHeader()))
+                }
+                IO.socket(ApiClient.ORIGIN, options).also { socket ->
+                    entitlementSocket = socket
+                    socket.on("subscription:changed") {
+                        viewModelScope.launch { if (phase.value == SessionPhase.SignedIn) runCatching { refresh() } }
+                    }
+                    socket.on(Socket.EVENT_CONNECT) {
+                        viewModelScope.launch { if (phase.value == SessionPhase.SignedIn) runCatching { refresh() } }
+                    }
+                    socket.connect()
+                }
+            }
+        }
+    }
+    fun stopEntitlementMonitoring() {
+        entitlementMonitor?.cancel()
+        entitlementMonitor = null
+        entitlementSocket?.off()
+        entitlementSocket?.disconnect()
+        entitlementSocket = null
+    }
+    override fun onCleared() {
+        stopEntitlementMonitoring()
+        super.onCleared()
+    }
+
     init { restore() }
     fun restore() = viewModelScope.launch {
         runCatching { refresh() }.onSuccess { phase.value = SessionPhase.SignedIn; reportPlatformVisit(); refreshUnread(); runCatching { PushNotifications.register() } }
             .onFailure { phase.value = SessionPhase.SignedOut }
     }
-    suspend fun refresh() { user.value = ApiClient.request("auth/me").jsonObject }
+    suspend fun refresh() = refreshMutex.withLock {
+        val generation = sessionGeneration
+        try {
+            val latest = ApiClient.request("auth/me").jsonObject
+            if (generation == sessionGeneration) {
+                user.value = latest
+                val subscription = runCatching { ApiClient.request("subscription").jsonObject }.getOrNull()
+                if (generation == sessionGeneration && subscription != null) entitlements.value = subscription.objectOrNull("entitlements")
+            }
+        } catch (e: ApiException) {
+            // Only an explicit authentication failure invalidates the local session.
+            // Network failures and temporary server errors must not sign members out.
+            if (generation == sessionGeneration && e.message?.contains("Unauthenticated", ignoreCase = true) == true) {
+                sessionGeneration++
+                user.value = null
+                entitlements.value = null
+                unread.intValue = 0
+                phase.value = SessionPhase.SignedOut
+            }
+            throw e
+        }
+    }
     private suspend fun reportPlatformVisit() {
         runCatching { ApiClient.request("platform-visit", HttpMethod.Post, obj("platform" to "android")) }
     }
@@ -40,7 +113,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun register(email: String, password: String, name: String, birthDate: String, consent: Boolean) = runTask {
         ApiClient.request("auth/register", HttpMethod.Post, obj("email" to email, "password" to password, "displayName" to name, "dateOfBirth" to birthDate, "consent" to consent)); refresh(); phase.value = SessionPhase.SignedIn; reportPlatformVisit(); runCatching { PushNotifications.register() }
     }
-    fun logout() = runTask { runCatching { PushNotifications.unregister() }; runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
+    fun logout() = runTask { stopEntitlementMonitoring(); sessionGeneration++; runCatching { PushNotifications.unregister() }; runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; entitlements.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
     fun routePush(conversationId:String?,groupId:String?){
         when { !conversationId.isNullOrBlank() -> pendingConversation.value=conversationId; !groupId.isNullOrBlank() -> pendingGroup.value=groupId }
     }

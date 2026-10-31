@@ -13,10 +13,13 @@ import org.json.JSONObject
 object Presence {
     val revision = mutableIntStateOf(0)
     val typingConversation = androidx.compose.runtime.mutableStateOf<String?>(null)
+    val typingUserId = androidx.compose.runtime.mutableStateOf<String?>(null)
     val typingRevision = mutableIntStateOf(0)
     private val mainHandler = Handler(Looper.getMainLooper())
-    fun sendTyping(conversationId:String, typing:Boolean) {
-        socket?.emit("typing", JSONObject().put("conversationId",conversationId).put("typing",typing))
+    fun sendTyping(conversationId:String, typing:Boolean, userId:String? = null) {
+        val payload = JSONObject().put("conversationId",conversationId).put("typing",typing)
+        if (!userId.isNullOrBlank()) payload.put("userId", userId)
+        socket?.emit("typing", payload)
     }
     private var socket: Socket? = null
     private const val TAG = "AFTRHRS-Presence"
@@ -33,15 +36,16 @@ object Presence {
                 extraHeaders = mapOf("Cookie" to listOf(cookie))
             }
             val connection = IO.socket(URI.create(ApiClient.ORIGIN), options)
-            connection.on(Socket.EVENT_CONNECT) { Log.i(TAG, "Presence connected"); revision.intValue++ }
+            connection.on(Socket.EVENT_CONNECT) { Log.i(TAG, "Presence connected"); mainHandler.post { revision.intValue++ } }
             connection.on(Socket.EVENT_CONNECT_ERROR) { args -> Log.w(TAG, "Presence connection failed: " + args.joinToString()) }
-            connection.on(Socket.EVENT_DISCONNECT) { Log.i(TAG, "Presence disconnected"); revision.intValue++ }
-            connection.on("grid:changed") { revision.intValue++ }
+            connection.on(Socket.EVENT_DISCONNECT) { Log.i(TAG, "Presence disconnected"); mainHandler.post { revision.intValue++ } }
+            connection.on("grid:changed") { mainHandler.post { revision.intValue++ } }
             connection.on("typing") { args ->
                 val event=args.firstOrNull() as? JSONObject
                 val conversationId=event?.optString("conversationId").orEmpty()
                 if(conversationId.isNotBlank()) mainHandler.post {
                     typingConversation.value=if(event?.optBoolean("typing")==true)conversationId else null
+                    typingUserId.value=if(event?.optBoolean("typing")==true)event.optString("userId",event.optString("senderId")) else null
                     typingRevision.intValue++
                 }
             }
@@ -63,5 +67,6 @@ object Presence {
         socket?.off()
         socket = null
         typingConversation.value = null
+        typingUserId.value = null
     }
 }

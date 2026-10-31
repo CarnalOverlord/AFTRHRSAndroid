@@ -46,9 +46,34 @@ import za.co.drkflm.afterhours.data.ApiClient
 import za.co.drkflm.afterhours.data.obj
 import java.io.File
 import java.time.LocalDate
+import kotlin.coroutines.resume
 
 @Composable fun AftrhrsRoot(vm: AppViewModel, locked: Boolean, authenticating: Boolean, authError: String?, lockEnabled: Boolean, unlock: () -> Unit, setLock: (Boolean) -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        if (grants.values.any { it }) vm.runTask { publishCurrentLocation(context) }
+    }
+    var locationPrompted by remember { mutableStateOf(false) }
+    val signedIn = vm.phase.value == SessionPhase.SignedIn
+    val locationAllowed = signedIn && vm.canEnter && !locked
+    LaunchedEffect(locationAllowed) {
+        if (locationAllowed && !locationPrompted &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            locationPrompted = true
+            locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+        }
+    }
+    LaunchedEffect(lifecycleOwner, locationAllowed) {
+        if (locationAllowed) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                runCatching { publishCurrentLocation(context) }
+                delay(60_000)
+            }
+        }
+    }
+
     val presenceAllowed = vm.phase.value == SessionPhase.SignedIn && vm.canEnter && !locked
     DisposableEffect(lifecycleOwner, presenceAllowed) {
         val observer = LifecycleEventObserver { _, event ->
@@ -60,11 +85,15 @@ import java.time.LocalDate
         else Presence.disconnect()
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer); Presence.disconnect() }
     }
-    LaunchedEffect(lifecycleOwner, presenceAllowed) {
-        if (presenceAllowed) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+    // Refresh the account for all signed-in members, including those awaiting
+    // verification. Refresh immediately on foreground, then every 30 seconds.
+    // Presence itself remains gated by verification and App Lock.
+    val sessionActive = vm.phase.value == SessionPhase.SignedIn
+    LaunchedEffect(lifecycleOwner, sessionActive) {
+        if (sessionActive) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
-                delay(30_000)
                 runCatching { vm.refresh() }
+                delay(30_000)
             }
         }
     }
@@ -137,12 +166,132 @@ private data class VerificationStep(val id:String,val slug:String,val title:Stri
 private val verificationSteps=listOf(VerificationStep("ID_FRONT","id-front","Front of your ID","Keep every edge and detail visible."),VerificationStep("ID_BACK","id-back","Back of your ID","Turn the same document over and photograph the back."),VerificationStep("SELFIE_WITH_ID","selfie-with-id","Selfie holding your ID","Hold the front beside your face so both are clear."))
 
 @Composable private fun VerificationScreen(vm: AppViewModel) {
-    val context=LocalContext.current; var status by remember{mutableStateOf("NOT_SUBMITTED")}; var captured by remember{mutableStateOf(setOf<String>())}; var active by remember{mutableStateOf<VerificationStep?>(null)}; var photo by remember{mutableStateOf<File?>(null)}
-    val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){ok->if(ok) photo?.let{file->active?.let{step->vm.runTask{ApiClient.upload("verification/evidence/${step.slug}",file);captured=captured+step.id}}}}
-    fun open(step:VerificationStep){active=step; val dir=File(context.cacheDir,"camera").apply{mkdirs()};photo=File(dir,"verify-${step.slug}.jpg");camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",photo!!))}
-    val permission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){ granted->if(granted) active?.let(::open) else vm.error.value="Camera access is required for live identity verification." }
-    LaunchedEffect(Unit){vm.runTask{val data=ApiClient.request("verification/status").jsonObject;status=data["status"]?.jsonPrimitive?.content?:status;captured=data["evidence"]?.jsonArray?.mapNotNull{it.jsonObject["type"]?.jsonPrimitive?.contentOrNull}?.toSet()?:emptySet()}}
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), horizontalAlignment=Alignment.CenterHorizontally){Image(painterResource(R.drawable.crescent_logo),"AFTRHRS",Modifier.fillMaxWidth(.55f));Text(if(status=="PENDING")"Verification pending" else "Verify to enter AFTRHRS",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text(if(status=="PENDING")"Your three photos are securely queued for review. AFTRHRS will unlock automatically as soon as you’re approved." else "Take three live camera photos. Screenshots and document scans are not accepted.",color=Muted,textAlign=TextAlign.Center,modifier=Modifier.padding(12.dp));verificationSteps.forEachIndexed{i,s->Row(Modifier.fillMaxWidth().padding(vertical=6.dp).glassCard(),verticalAlignment=Alignment.CenterVertically){Text("${i+1}",color=Lavender,fontWeight=FontWeight.Bold);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(s.title,fontWeight=FontWeight.Bold);Text(s.help,color=Muted,style=MaterialTheme.typography.bodySmall)};ElectricButton(onClick={active=s;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)open(s)else permission.launch(Manifest.permission.CAMERA)},modifier=Modifier.width(104.dp)){Text(if(s.id in captured)"Retake" else "Camera")}}};if(status!="PENDING"){Spacer(Modifier.height(14.dp));NeonButton("Submit for review",captured.containsAll(verificationSteps.map{it.id})){vm.runTask{ApiClient.request("verification/submit",HttpMethod.Post);status="PENDING"}}};TextButton(onClick={vm.logout()}){Text("Sign out")}}
+    val context = LocalContext.current
+    var status by remember { mutableStateOf("NOT_STARTED") }
+    var reviewNote by remember { mutableStateOf<String?>(null) }
+    var captured by remember { mutableStateOf(setOf<String>()) }
+    var active by remember { mutableStateOf<VerificationStep?>(null) }
+    var photo by remember { mutableStateOf<File?>(null) }
+    var submitting by remember { mutableStateOf(false) }
+
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        if (ok) photo?.let { file ->
+            active?.let { step ->
+                vm.runTask {
+                    ApiClient.upload("verification/evidence/${step.slug}", file)
+                    captured = captured + step.id
+                }
+            }
+        }
+    }
+    fun open(step: VerificationStep) {
+        active = step
+        val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+        photo = File(dir, "verify-${step.slug}.jpg")
+        camera.launch(FileProvider.getUriForFile(context, "${context.packageName}.files", photo!!))
+    }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) active?.let(::open)
+        else vm.error.value = "Camera access is required for identity verification."
+    }
+
+    // Keep the gate in sync even while the member is unverified. The root presence
+    // refresh is intentionally disabled for members who cannot enter the app yet.
+    LaunchedEffect(Unit) {
+        while (true) {
+            try {
+                val data = ApiClient.request("verification/status").jsonObject
+                status = data["status"]?.jsonPrimitive?.contentOrNull ?: "NOT_STARTED"
+                reviewNote = data["note"]?.jsonPrimitive?.contentOrNull
+                captured = data["evidence"]?.jsonArray
+                    ?.mapNotNull { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull }
+                    ?.toSet() ?: emptySet()
+                if (status == "APPROVED") {
+                    vm.refresh()
+                    break
+                }
+            } catch (e: Exception) {
+                // Transient network failures should not discard the captured evidence.
+                if (status == "NOT_STARTED") vm.error.value = e.message ?: "Unable to check verification status."
+            }
+            delay(15_000)
+        }
+    }
+
+    val awaitingReview = status == "PENDING" || status == "REVIEW"
+    val rejected = status == "REJECTED"
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Image(painterResource(R.drawable.crescent_logo), "AFTRHRS", Modifier.fillMaxWidth(.55f))
+        Text(
+            when {
+                awaitingReview -> "Verification pending"
+                rejected -> "Verification needs attention"
+                else -> "Verify to enter AFTRHRS"
+            },
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            when {
+                awaitingReview -> "Your identity photos are awaiting human review. This screen checks for approval automatically."
+                rejected -> "Your previous submission was not approved. Review the reason below, retake your photos and submit again."
+                else -> "Take three live camera photos for manual identity review. Screenshots and document scans are not accepted."
+            },
+            color = Muted,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(12.dp)
+        )
+        if (rejected) {
+            Text(
+                reviewNote?.takeIf { it.isNotBlank() } ?: "Please capture clear, readable photos and submit them again.",
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            )
+        }
+        if (!awaitingReview) {
+            verificationSteps.forEachIndexed { i, step ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 6.dp).glassCard(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("${i + 1}", color = Lavender, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(step.title, fontWeight = FontWeight.Bold)
+                        Text(step.help, color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    ElectricButton(
+                        onClick = {
+                            active = step
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) open(step)
+                            else permission.launch(Manifest.permission.CAMERA)
+                        },
+                        modifier = Modifier.width(104.dp)
+                    ) { Text(if (step.id in captured) "Retake" else "Camera") }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            NeonButton(
+                if (submitting) "Submitting…" else "Submit for review",
+                !submitting && captured.containsAll(verificationSteps.map { it.id })
+            ) {
+                submitting = true
+                vm.runTask {
+                    try {
+                        ApiClient.request("verification/submit", HttpMethod.Post)
+                        status = "PENDING"
+                        reviewNote = null
+                    } finally { submitting = false }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        TextButton(onClick = { vm.logout() }) { Text("Sign out") }
+    }
 }
 
 @Composable
@@ -226,4 +375,31 @@ private fun MainTabs(vm: AppViewModel, lockEnabled: Boolean, setLock: (Boolean) 
             }
         }
     }
+}
+
+private suspend fun publishCurrentLocation(context: android.content.Context) {
+    val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    if (!fine && !coarse) return
+    val client = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
+    val priority = if (fine) com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        else com.google.android.gms.location.Priority.PRIORITY_LOW_POWER
+    val location = kotlinx.coroutines.suspendCancellableCoroutine<android.location.Location?> { continuation ->
+        val token = com.google.android.gms.tasks.CancellationTokenSource()
+        continuation.invokeOnCancellation { token.cancel() }
+        try {
+            client.getCurrentLocation(priority, token.token)
+                .addOnSuccessListener { if (continuation.isActive) continuation.resume(it) }
+                .addOnFailureListener { if (continuation.isActive) continuation.resumeWith(Result.failure(it)) }
+        } catch (error: SecurityException) {
+            if (continuation.isActive) continuation.resumeWith(Result.failure(error))
+        }
+    } ?: return
+    // Reject invalid coordinates rather than submitting the device's fallback 0,0.
+    if (!(-90.0..90.0).contains(location.latitude) || !(-180.0..180.0).contains(location.longitude)) return
+    ApiClient.request("location/current", HttpMethod.Post, obj(
+        "latitude" to location.latitude,
+        "longitude" to location.longitude,
+        "accuracy" to location.accuracy.toDouble().coerceAtLeast(0.1)
+    ))
 }

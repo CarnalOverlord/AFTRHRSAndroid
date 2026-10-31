@@ -92,9 +92,32 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     var radius by remember { mutableFloatStateOf(25f) }
     var radiusMax by remember { mutableIntStateOf(25) }
     var advanced by remember { mutableStateOf(false) }
+    val serverEntitlements = vm.entitlements.value
     var criteria by remember { mutableStateOf(DiscoveryFilters()) }
     fun load(targetRadius:Float=radius,targetCriteria:DiscoveryFilters=criteria) { vm.runTask { loading=true;try{items=ApiClient.request(discoveryPath(targetRadius.toInt(),targetCriteria,advanced)).jsonObject.array("items")}finally{loading=false} } }
-    LaunchedEffect(Unit) { vm.runTask { val config=ApiClient.request("discovery/filters").jsonObject;radiusMax=config.int("radiusMax").coerceAtLeast(25);advanced=config.bool("advanced");radius=(config.objectOrNull("preferences")?.get("radiusKm")?.jsonPrimitive?.floatOrNull?:25f).let { if (advanced && it == 0f) 0f else it.coerceIn(1f,radiusMax.toFloat()) };loading=true;try{items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items")}finally{loading=false} } }
+    var savingRadius by remember { mutableStateOf(false) }
+    suspend fun syncRadius() {
+        if (savingRadius) return
+        val config = ApiClient.request("discovery/filters").jsonObject
+        advanced = serverEntitlements?.bool("advancedFilters") ?: config.bool("advanced")
+        radiusMax = if (serverEntitlements?.bool("unlimitedDiscoveryRadius") == true) 20000 else 25
+        val stored = config.objectOrNull("preferences")?.get("radiusKm")?.jsonPrimitive?.floatOrNull
+        val synced = stored ?: if (advanced) 0f else 25f
+        radius = if (advanced && synced == 0f) 0f else synced.coerceIn(1f, radiusMax.toFloat())
+        items = ApiClient.request(discoveryPath(radius.toInt(), criteria, advanced)).jsonObject.array("items")
+    }
+    LaunchedEffect(vm.user.value?.str("subscription"), vm.entitlements.value) {
+        vm.runTask { loading = true; try { syncRadius() } finally { loading = false } }
+    }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while (true) {
+                delay(30_000)
+                runCatching { syncRadius() }
+            }
+        }
+    }
     val gridRevision = Presence.revision.intValue
     LaunchedEffect(gridRevision) { if(gridRevision>0 && !loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } }
     LaunchedEffect(Unit) { while(true) { delay(30_000); if(!loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } } }
@@ -105,10 +128,10 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
             LazyVerticalGridCompat(items) { profile -> ProfileTile(profile){selected=profile} }
         }
     }
-    if(filters) DiscoveryFilterSheet(radius,criteria,radiusMax,advanced,{filters=false}){newRadius,newCriteria->radius=newRadius;criteria=newCriteria;filters=false;load(newRadius,newCriteria)}
+    if(filters) DiscoveryFilterSheet(radius,criteria,radiusMax,advanced,{filters=false}){newRadius,newCriteria->val chosen=if(advanced&&newRadius==0f)0f else newRadius.coerceIn(1f,if(advanced)20000f else 25f);criteria=newCriteria;filters=false;vm.runTask{savingRadius=true;try{ApiClient.request("preferences",HttpMethod.Patch,obj("radiusKm" to chosen.toInt()));radius=chosen;items=ApiClient.request(discoveryPath(chosen.toInt(),newCriteria,advanced)).jsonObject.array("items")}finally{savingRadius=false}}}
 }
 @Composable private fun DiscoveryNumberField(label:String,value:String,range:IntRange,change:(String)->Unit){OutlinedTextField(value,{raw->val digits=raw.filter(Char::isDigit);change(if(digits.isBlank())""else digits.toIntOrNull()?.coerceIn(range.first,range.last)?.toString().orEmpty())},label={Text(label)},placeholder={Text("Any")},modifier=Modifier.fillMaxWidth())}
-@Composable private fun DiscoveryFilterSheet(initialRadius:Float,initial:DiscoveryFilters,radiusMax:Int,advanced:Boolean,dismiss:()->Unit,apply:(Float,DiscoveryFilters)->Unit){var radius by remember{mutableFloatStateOf(initialRadius)};var f by remember{mutableStateOf(initial)};val races=listOf("Black","Coloured","Indian / South Asian","White","Asian","Mixed","Other");val bodies=listOf("Toned","Average","Large","Muscular","Slim","Stocky");val relationships=listOf("Committed","Dating","Engaged","Exclusive","Married","Open Relationship","Partnered","Single");val tribes=listOf("Bear","Clean Cut","Daddy","Discreet","Geek","Interracial","Jock","Leather","Otter","Poz","Rugged","Trans","Twink","Sober");val hair=listOf("Smooth","Some","Hairy","Very hairy");val religions=listOf("African traditional spirituality","Christianity","Islam","Hinduism","Judaism","Buddhism","Agnostic","Atheist","Spiritual","Other");val positions=listOf("Top","Top / Vers","Vers","Bottom / Vers","Bottom","Side");val kinks=listOf("Group","Couples","One on One","Oral Only","Threesomes","Public","BDSM","Slave/Master","Toy Fun");ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=790.dp).verticalScroll(rememberScrollState()).padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){Text("Find your vibe",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);EditorSection("Distance"){if(advanced)PrivacyToggle("Unlimited distance",radius==0f){radius=if(it)0f else radiusMax.toFloat()};Text(if(advanced&&radius==0f)"Show members at any distance"else"Within ${radius.toInt()} km",color=Lavender);if(radius!=0f)Slider(radius,{radius=it},valueRange=1f..radiusMax.toFloat(),steps=(radiusMax-2).coerceAtLeast(0));if(!advanced)Text("Free members are limited to 25 km.",color=Muted,style=MaterialTheme.typography.bodySmall)};EditorSection(if(advanced)"Profile filters"else"Profile filters · Premium"){Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(9.dp)){PrivacyToggle("Online members only",f.online,advanced){f=f.copy(online=it)};DiscoveryNumberField("Minimum age",f.minAge,18..99){f=f.copy(minAge=it)};DiscoveryNumberField("Maximum age",f.maxAge,18..99){f=f.copy(maxAge=it)};SelectField("Body type",f.bodyType,listOf("")+bodies,{if(it.isBlank())"Any body type"else it}){f=f.copy(bodyType=it)};DiscoveryNumberField("Minimum height (cm)",f.minHeight,100..250){f=f.copy(minHeight=it)};DiscoveryNumberField("Maximum height (cm)",f.maxHeight,100..250){f=f.copy(maxHeight=it)};DiscoveryNumberField("Minimum weight (kg)",f.minWeight,30..300){f=f.copy(minWeight=it)};DiscoveryNumberField("Maximum weight (kg)",f.maxWeight,30..300){f=f.copy(maxWeight=it)};SelectField("Relationship",f.relationshipStatus,listOf("")+relationships,{if(it.isBlank())"Any relationship"else it}){f=f.copy(relationshipStatus=it)};SelectField("Race",f.race,listOf("")+races,{if(it.isBlank())"Any race"else it}){f=f.copy(race=it)};SelectField("Body hair",f.bodyHair,listOf("")+hair,{if(it.isBlank())"Any body hair"else it}){f=f.copy(bodyHair=it)};SelectField("Religion",f.religion,listOf("")+religions,{if(it.isBlank())"Any religion"else it}){f=f.copy(religion=it)};MultiChoiceField("Tribes · any match",tribes,f.tribes,tribes.size){f=f.copy(tribes=if(it in f.tribes)f.tribes-it else f.tribes+it)};SelectField("Cut / Uncut",f.circumcisionStatus,listOf("","Cut","Uncut"),{if(it.isBlank())"Any"else it}){f=f.copy(circumcisionStatus=it)};SelectField("Position",f.position,listOf("")+positions,{if(it.isBlank())"Any position"else it}){f=f.copy(position=it)};MultiChoiceField("Kinks · any match",kinks,f.kinks,3){f=f.copy(kinks=if(it in f.kinks)f.kinks-it else f.kinks+it)};OutlinedTextField(f.lookingFor,{f=f.copy(lookingFor=it)},label={Text("Looking for · comma separated")},modifier=Modifier.fillMaxWidth());OutlinedTextField(f.interests,{f=f.copy(interests=it)},label={Text("Interests · comma separated")},modifier=Modifier.fillMaxWidth());SelectField("Profile picture",f.photo,listOf("all","with","without"),{when(it){"with"->"With a picture";"without"->"Without a picture";else->"All profiles"}}){f=f.copy(photo=it)}};if(!advanced)Text("Upgrade to Premium to use profile and online filters.",color=Muted,style=MaterialTheme.typography.bodySmall)};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton({f=DiscoveryFilters();radius=radiusMax.toFloat()},Modifier.weight(1f)){Text("Clear all")};ElectricButton({apply(radius,f)},Modifier.weight(1f)){Text("Apply")}};Spacer(Modifier.height(28.dp))}}}
+@Composable private fun DiscoveryFilterSheet(initialRadius:Float,initial:DiscoveryFilters,radiusMax:Int,advanced:Boolean,dismiss:()->Unit,apply:(Float,DiscoveryFilters)->Unit){var radius by remember{mutableFloatStateOf(initialRadius)};var f by remember{mutableStateOf(initial)};val races=listOf("Black","Coloured","Indian / South Asian","White","Asian","Mixed","Other");val bodies=listOf("Toned","Average","Large","Muscular","Slim","Stocky");val relationships=listOf("Committed","Dating","Engaged","Exclusive","Married","Open Relationship","Partnered","Single");val tribes=listOf("Bear","Clean Cut","Daddy","Discreet","Geek","Interracial","Jock","Leather","Otter","Poz","Rugged","Trans","Twink","Sober");val hair=listOf("Smooth","Some","Hairy","Very hairy");val religions=listOf("African traditional spirituality","Christianity","Islam","Hinduism","Judaism","Buddhism","Agnostic","Atheist","Spiritual","Other");val positions=listOf("Top","Top / Vers","Vers","Bottom / Vers","Bottom","Side");val kinks=listOf("Group","Couples","One on One","Oral Only","Threesomes","Public","BDSM","Slave/Master","Toy Fun");ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=790.dp).verticalScroll(rememberScrollState()).padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){Text("Find your vibe",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);EditorSection("Distance"){if(advanced)PrivacyToggle("Unlimited distance",radius==0f){radius=if(it)0f else radiusMax.toFloat()};Text(if(advanced&&radius==0f)"Show members at any distance"else"Within ${radius.toInt()} km",color=Lavender);if(radius!=0f)Slider(radius,{radius=it},valueRange=1f..radiusMax.toFloat(),steps=(radiusMax-2).coerceAtLeast(0));if(!advanced)Text("Free members are limited to 25 km.",color=Muted,style=MaterialTheme.typography.bodySmall)};EditorSection(if(advanced)"Profile filters"else"Profile filters · Premium"){Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(9.dp)){PrivacyToggle("Online members only",f.online,advanced){f=f.copy(online=it)};DiscoveryNumberField("Minimum age",f.minAge,18..99){f=f.copy(minAge=it)};DiscoveryNumberField("Maximum age",f.maxAge,18..99){f=f.copy(maxAge=it)};SelectField("Body type",f.bodyType,listOf("")+bodies,{if(it.isBlank())"Any body type"else it}){f=f.copy(bodyType=it)};DiscoveryNumberField("Minimum height (cm)",f.minHeight,100..250){f=f.copy(minHeight=it)};DiscoveryNumberField("Maximum height (cm)",f.maxHeight,100..250){f=f.copy(maxHeight=it)};DiscoveryNumberField("Minimum weight (kg)",f.minWeight,30..300){f=f.copy(minWeight=it)};DiscoveryNumberField("Maximum weight (kg)",f.maxWeight,30..300){f=f.copy(maxWeight=it)};SelectField("Relationship",f.relationshipStatus,listOf("")+relationships,{if(it.isBlank())"Any relationship"else it}){f=f.copy(relationshipStatus=it)};SelectField("Race",f.race,listOf("")+races,{if(it.isBlank())"Any race"else it}){f=f.copy(race=it)};SelectField("Body hair",f.bodyHair,listOf("")+hair,{if(it.isBlank())"Any body hair"else it}){f=f.copy(bodyHair=it)};SelectField("Religion",f.religion,listOf("")+religions,{if(it.isBlank())"Any religion"else it}){f=f.copy(religion=it)};MultiChoiceField("Tribes · any match",tribes,f.tribes,tribes.size){f=f.copy(tribes=if(it in f.tribes)f.tribes-it else f.tribes+it)};SelectField("Cut / Uncut",f.circumcisionStatus,listOf("","Cut","Uncut"),{if(it.isBlank())"Any"else it}){f=f.copy(circumcisionStatus=it)};SelectField("Position",f.position,listOf("")+positions,{if(it.isBlank())"Any position"else it}){f=f.copy(position=it)};MultiChoiceField("Kinks · any match",kinks,f.kinks,3){f=f.copy(kinks=if(it in f.kinks)f.kinks-it else f.kinks+it)};OutlinedTextField(f.lookingFor,{f=f.copy(lookingFor=it)},label={Text("Looking for · comma separated")},modifier=Modifier.fillMaxWidth());OutlinedTextField(f.interests,{f=f.copy(interests=it)},label={Text("Interests · comma separated")},modifier=Modifier.fillMaxWidth());SelectField("Profile picture",f.photo,listOf("all","with","without"),{when(it){"with"->"With a picture";"without"->"Without a picture";else->"All profiles"}}){f=f.copy(photo=it)}};if(!advanced)Text("Upgrade to Premium to use profile and online filters.",color=Muted,style=MaterialTheme.typography.bodySmall)};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton({f=DiscoveryFilters();radius=if(advanced)0f else 25f},Modifier.weight(1f)){Text("Clear all")};ElectricButton({apply(radius,f)},Modifier.weight(1f)){Text("Apply")}};Spacer(Modifier.height(28.dp))}}}
 @Composable private fun LazyVerticalGridCompat(items:JsonArray,item:@Composable (JsonObject) -> Unit){LazyColumn(contentPadding=PaddingValues(horizontal=12.dp,vertical=4.dp)){items(items.chunked(2)){row->Row(Modifier.fillMaxWidth()){row.forEach{Box(Modifier.weight(1f).padding(6.dp)){item(it.jsonObject)}};if(row.size==1)Spacer(Modifier.weight(1f))}}}}
 private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Vers"->"↗";"Vers"->"↕";"Bottom / Vers"->"↘";"Bottom"->"↓";"Side"->"↔";else->""}
 @Composable private fun GridChip(text:String,symbol:String?=null){Row(Modifier.border(1.dp,Electric.copy(alpha=.8f),RoundedCornerShape(50)).background(Electric.copy(alpha=.13f),RoundedCornerShape(50)).padding(horizontal=7.dp,vertical=3.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){symbol?.takeIf{it.isNotBlank()}?.let{Text(it,color=Lavender,style=MaterialTheme.typography.labelSmall)};Text(text,color=Lavender,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold,maxLines=1)}}
@@ -154,6 +177,9 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
     BackHandler(onBack=back)
     var p by remember{mutableStateOf<JsonObject?>(null)}
     var safety by remember{mutableStateOf(false)}
+    var reportWithBlock by remember(id){mutableStateOf<Boolean?>(null)}
+    var reportReason by remember(id){mutableStateOf("Fake Profile")}
+    var reportDetails by remember(id){mutableStateOf("")}
     var liked by remember(id){mutableStateOf(false)}
     var liking by remember(id){mutableStateOf(false)}
     val scope=rememberCoroutineScope()
@@ -231,7 +257,45 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
             }
         }
     }
-    if(safety)AlertDialog({safety=false},title={Text("Safety actions")},text={Text("You can report this profile for review, block it so you no longer see each other, or do both.")},confirmButton={TextButton({vm.runTask{ApiClient.request("reports",HttpMethod.Post,obj("userId" to id,"reason" to "OTHER","details" to "Reported from Android app"));ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id))};safety=false}){Text("Report & block")}},dismissButton={TextButton({safety=false}){Text("Cancel")}})
+    if(safety)AlertDialog(
+        onDismissRequest={safety=false},
+        title={Text("Safety actions")},
+        text={Text("Choose whether to block this member, submit a report, or do both.")},
+        confirmButton={Column{
+            TextButton(onClick={safety=false;vm.runTask{ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id));vm.error.value="Member blocked."}}){Text("Block")}
+            TextButton(onClick={safety=false;reportWithBlock=false}){Text("Report")}
+            TextButton(onClick={safety=false;reportWithBlock=true}){Text("Block & report")}
+        }},
+        dismissButton={TextButton(onClick={safety=false}){Text("Cancel")}}
+    )
+    reportWithBlock?.let { blockAfterReport ->
+        val reasons=listOf("Fake Profile","Inappropriate content","Scam or commercial","Identity-based hate","Underage")
+        AlertDialog(
+            onDismissRequest={reportWithBlock=null},
+            title={Text("Report member")},
+            text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Text("Select a reason for reporting this member.")
+                reasons.forEach { reason ->
+                    Row(Modifier.fillMaxWidth().clickable{reportReason=reason},verticalAlignment=Alignment.CenterVertically){
+                        RadioButton(selected=reportReason==reason,onClick={reportReason=reason})
+                        Text(reason)
+                    }
+                }
+                OutlinedTextField(value=reportDetails,onValueChange={reportDetails=it.take(1000)},label={Text("Additional details (optional)")},modifier=Modifier.fillMaxWidth(),minLines=2,maxLines=4)
+            }},
+            confirmButton={TextButton(onClick={
+                val reason=reportReason
+                val details=reportDetails.trim()
+                reportWithBlock=null
+                vm.runTask{
+                    ApiClient.request("reports",HttpMethod.Post,obj("userId" to id,"reason" to reason,"details" to details))
+                    if(blockAfterReport)ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id))
+                    vm.error.value=if(blockAfterReport)"Report submitted and member blocked."else"Report submitted."
+                }
+            }){Text(if(blockAfterReport)"Report & block"else"Submit report")}},
+            dismissButton={TextButton(onClick={reportWithBlock=null}){Text("Cancel")}}
+        )
+    }
 }
 
 @Composable fun LikesScreen(vm:AppViewModel){var tab by remember{mutableIntStateOf(0)};var items by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))};var selected by remember{mutableStateOf<String?>(null)};suspend fun load(){val data=ApiClient.request(when(tab){0->"likes/received";1->"likes";else->"likes/matches"});items=if(data is JsonArray)data else data.jsonObject.array("items")};LaunchedEffect(tab){vm.runTask{load()}};selected?.let{ProfileScreen(vm,it){selected=null};return};Column{Header("Likes","Connections waiting in the wings");TabRow(tab){Tab(tab==0,{tab=0},text={Text("Liked you")});Tab(tab==1,{tab=1},text={Text("You liked")});Tab(tab==2,{tab=2},text={Text("Matches")})};LazyColumn{if(items.isEmpty())item{Text("No likes here yet.",color=Muted,modifier=Modifier.padding(24.dp))};items(items.size){i->val p=items[i].jsonObject;val detail=p.strOrNull("bio").visibleProfileValue()?:p.strOrNull("city").visibleProfileValue();ListItem(headlineContent={Text(p.str("displayName"),fontWeight=FontWeight.Bold)},supportingContent=detail?.let{{Text(it,maxLines=2)}},leadingContent={Avatar(p.strOrNull("photo"))},modifier=Modifier.clickable{selected=p.str("id")})}}}
@@ -247,8 +311,12 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var deleteTarget by remember{mutableStateOf<JsonObject?>(null)}
     var deleting by remember{mutableStateOf(false)}
     var deleteScope by remember{mutableStateOf("me")}
-    val isPremium=vm.user.value?.str("subscription")=="PREMIUM" || vm.user.value?.str("role")=="ADMIN"
-    suspend fun load(){items=ApiClient.request(if(tab==0)"conversations" else "group-chats").jsonArray;vm.refreshUnread()}
+    var canDeleteForEveryone by remember { mutableStateOf(false) }
+    suspend fun refreshEntitlements(){
+        canDeleteForEveryone=vm.entitlements.value?.bool("deleteConversationForEveryone")==true
+        if(!canDeleteForEveryone && deleteScope=="everyone")deleteScope="me"
+    }
+    suspend fun load(){items=ApiClient.request(if(tab==0)"conversations" else "group-chats").jsonArray;vm.refreshUnread();runCatching{refreshEntitlements()}}
     LaunchedEffect(tab){vm.runTask{load()}}
     val inboxRevision = Presence.revision.intValue
     LaunchedEffect(tab,inboxRevision) { if(inboxRevision>0) runCatching { load() } }
@@ -279,11 +347,11 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                         RadioButton(selected=deleteScope=="me",onClick={deleteScope="me"})
                         Text("Delete for me")
                     }
-                    Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth().clickable{if(isPremium)deleteScope="everyone"}){
-                        RadioButton(selected=deleteScope=="everyone",onClick={deleteScope="everyone"},enabled=isPremium)
+                    Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth().clickable{if(canDeleteForEveryone)deleteScope="everyone"}){
+                        RadioButton(selected=deleteScope=="everyone",onClick={deleteScope="everyone"},enabled=canDeleteForEveryone)
                         Column{
                             Text("Delete for both parties")
-                            if(!isPremium)Text("Premium only",color=Lavender,style=MaterialTheme.typography.labelSmall)
+                            if(!canDeleteForEveryone)Text("Premium only",color=Lavender,style=MaterialTheme.typography.labelSmall)
                         }
                     }
                     Text(if(deleteScope=="everyone")"Permanently deletes the conversation for both people. This cannot be undone." else "Removes the conversation from your chat list. The other person keeps their copy.",color=Muted,style=MaterialTheme.typography.bodySmall)
@@ -327,6 +395,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     BackHandler(onBack=back)
     val context=LocalContext.current
     val id=c.str("id")
+    val creatorAnnouncement=c.bool("systemAnnouncement")
     var other by remember(c.str("id")) { mutableStateOf(c.objectOrNull("other")) }
     var requestStatus by remember(id){mutableStateOf(c.str("status"))}
     var requesterId by remember(id){mutableStateOf(c.str("requestedById"))}
@@ -355,7 +424,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         while(remoteTyping){delay(420);typingDots=typingDots%3+1}
     }
     LaunchedEffect(id,text){
-        if(text.isNotBlank() && !isIncomingRequest){
+        if(text.isNotBlank() && !isIncomingRequest && !creatorAnnouncement){
             Presence.sendTyping(id,true)
             delay(1_600)
             Presence.sendTyping(id,false)
@@ -366,6 +435,8 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var viewedProfile by remember{mutableStateOf<String?>(null)}
     var replyingTo by remember { mutableStateOf<JsonObject?>(null) }
     var attach by remember{mutableStateOf(false)}
+    var pendingChatPhotos by remember(id){mutableStateOf<List<Uri>>(emptyList())}
+    var sendingChatPhotos by remember(id){mutableStateOf(false)}
     var cameraFile by remember{mutableStateOf<File?>(null)}
     var chooseGallery by remember{mutableStateOf(false)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
@@ -408,7 +479,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     }
     val quickieVideoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val quickiePhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
-    val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty())vm.runTask{try{require(uris.size<=10){"Choose up to 10 chat photos at a time."};uris.forEach{uploadFileFromUri(context,it,"conversations/$id/images")}}finally{load()}}}
+    val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty()){pendingChatPhotos=uris.take(10);if(uris.size>10)vm.error.value="Only the first 10 images were selected."}}
     val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->if(saved)cameraFile?.let(::upload)}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
     val cameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)openCamera()else vm.error.value="Camera permission is required to take a photo."}
@@ -468,6 +539,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 MessageBubble(
                     messages[i].jsonObject,
                     vm.user.value?.str("id"),
+                    canSeeReadReceipts = vm.entitlements.value?.bool("readReceipts") == true, // Server also filters reads by entitlement and recipient privacy.
                     openGallery = { galleryId ->
                         vm.runTask {
                             openedGallery = ApiClient.request("private-galleries/$galleryId/view").jsonObject
@@ -480,7 +552,11 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                             load()
                         }
                     },
-                    reply = { message -> replyingTo = message }
+                    reply = { message -> replyingTo = message },
+                    react = { message, emoji -> vm.runTask {
+                        ApiClient.request("conversations/$id/messages/${message.str("id")}/reactions",HttpMethod.Post,buildJsonObject{put("emoji",emoji)})
+                        load()
+                    } }
                 )
             }
         }
@@ -493,8 +569,10 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 IconButton({replyingTo=null}){Icon(Icons.Default.Close,"Cancel reply",tint=Muted)}
             }
         }
-        if(remoteTyping) Text("Typing"+ ".".repeat(typingDots),color=Lavender,style=MaterialTheme.typography.labelMedium,modifier=Modifier.padding(start=18.dp,bottom=4.dp))
-        if(!isIncomingRequest){
+        if(!creatorAnnouncement && remoteTyping) Text("Typing"+ ".".repeat(typingDots),color=Lavender,style=MaterialTheme.typography.labelMedium,modifier=Modifier.padding(start=18.dp,bottom=4.dp))
+        if(creatorAnnouncement){
+            Text("The Creator announcement · Read only",color=Lavender,modifier=Modifier.padding(16.dp))
+        }else if(!isIncomingRequest){
         Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton({attach=true}){Icon(Icons.Default.AddCircle,"Attachments",tint=Lavender)}
             OutlinedTextField(text,{text=it},Modifier.weight(1f),placeholder={Text("Message",color=Muted)})
@@ -514,6 +592,40 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         }
         }
     }
+    if(pendingChatPhotos.isNotEmpty())AlertDialog(
+        onDismissRequest={if(!sendingChatPhotos)pendingChatPhotos=emptyList()},
+        title={Text("Send ${pendingChatPhotos.size} photo${if(pendingChatPhotos.size==1)"" else "s"}?")},
+        text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Text("Review your selection. Remove any photo before sending.",color=Muted)
+            LazyColumn(Modifier.heightIn(max=340.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                items(pendingChatPhotos.size){index->
+                    val uri=pendingChatPhotos[index]
+                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                        AsyncImage(uri,null,Modifier.size(76.dp).clip(RoundedCornerShape(10.dp)),contentScale=ContentScale.Crop)
+                        Text("Photo ${index+1}",Modifier.weight(1f))
+                        IconButton({pendingChatPhotos=pendingChatPhotos.filterIndexed{i,_->i!=index}},enabled=!sendingChatPhotos){
+                            Icon(Icons.Default.Close,"Remove photo")
+                        }
+                    }
+                }
+            }
+            if(sendingChatPhotos)LinearProgressIndicator(Modifier.fillMaxWidth())
+        }},
+        dismissButton={TextButton({pendingChatPhotos=emptyList()},enabled=!sendingChatPhotos){Text("Cancel")}},
+        confirmButton={TextButton(onClick={
+            if(!sendingChatPhotos){
+                val selection=pendingChatPhotos.toList()
+                sendingChatPhotos=true
+                vm.runTask{
+                    try{
+                        selection.forEach{uploadFileFromUri(context,it,"conversations/$id/images")}
+                        pendingChatPhotos=emptyList()
+                        load()
+                    }finally{sendingChatPhotos=false}
+                }
+            }
+        },enabled=!sendingChatPhotos&&pendingChatPhotos.isNotEmpty()){Text(if(sendingChatPhotos)"Sending…"else"Send ${pendingChatPhotos.size}")}}
+    )
     if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
@@ -527,7 +639,7 @@ private fun replySnippet(m:JsonObject):String = when {
     m.str("body").startsWith("LOCATION:") -> "Shared location"
     else -> m.str("body").take(120)
 }
-@Composable private fun MessageBubble(m:JsonObject,me:String?,openGallery:(String)->Unit={},openOnce:(String)->Unit={},reply:(JsonObject)->Unit={}){
+@Composable private fun MessageBubble(m:JsonObject,me:String?,canSeeReadReceipts:Boolean=false,openGallery:(String)->Unit={},openOnce:(String)->Unit={},reply:(JsonObject)->Unit={},react:(JsonObject,String)->Unit={_,_->}){
     val mine=m.str("senderId")==me
     val body=m.str("body")
     val kind=m.str("kind").uppercase()
@@ -591,6 +703,27 @@ private fun replySnippet(m:JsonObject):String = when {
                     Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)
                 }
                 else -> SelectionContainer { ChatLinkPreview(body) }
+            }
+            if(!m.bool("viewOnce")){
+                val reactions=m.array("reactions").map{it.jsonObject}
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(3.dp)){
+                    listOf("❤️","🔥","😈","😂","👀","👍").forEach{emoji->
+                        val count=reactions.count{it.str("emoji")==emoji}
+                        TextButton(onClick={react(m,emoji)},contentPadding=PaddingValues(horizontal=2.dp,vertical=0.dp)){
+                            Text(emoji+(if(count>0)" $count" else ""),color=Lavender,style=MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+            Text(chatMessageTimestamp(m.str("createdAt")), color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
+            if(mine){
+                val read = canSeeReadReceipts && m.array("reads").isNotEmpty()
+                Text(
+                    if(read)"✓✓ Read" else "✓ Delivered",
+                    color=if(read)Lavender else Muted,
+                    style=MaterialTheme.typography.labelSmall,
+                    modifier=Modifier.align(Alignment.End).padding(top=5.dp)
+                )
             }
         }
     }
@@ -776,6 +909,27 @@ private val groupBubblePalette = listOf(
     suspend fun load(){messages=ApiClient.request("group-chats/$id/messages").jsonArray}
     LaunchedEffect(id){if(g.str("status")=="ACCEPTED")vm.runTask{load()}}
     LaunchedEffect(messages.size){if(messages.isNotEmpty())listState.scrollToItem(messages.lastIndex)}
+    val groupTypingRevision = Presence.typingRevision.intValue
+    var groupRemoteTyping by remember(id) { mutableStateOf(false) }
+    var groupTypingName by remember(id) { mutableStateOf("Someone") }
+    LaunchedEffect(id, groupTypingRevision) {
+        groupRemoteTyping = Presence.typingConversation.value == id
+        if (groupRemoteTyping) {
+            val sender = Presence.typingUserId.value
+            groupTypingName = g.array("members").map { it.jsonObject }
+                .firstOrNull { it.str("id") == sender }?.str("name")?.takeIf { it.isNotBlank() } ?: "Someone"
+            delay(3_500)
+            groupRemoteTyping = false
+        }
+    }
+    LaunchedEffect(id, text) {
+        if (text.isNotBlank()) {
+            Presence.sendTyping(id, true, me)
+            delay(1_600)
+            Presence.sendTyping(id, false, me)
+        } else Presence.sendTyping(id, false, me)
+    }
+    DisposableEffect(id) { onDispose { Presence.sendTyping(id, false, me) } }
     val participants=remember(messages,g){
         (g.array("members").map{it.jsonObject.str("id")}+
             messages.map{it.jsonObject.str("senderId")}).filter{it.isNotBlank()}.distinct().sorted()
@@ -784,6 +938,7 @@ private val groupBubblePalette = listOf(
         participants.mapIndexed{index,userId->userId to groupBubblePalette[index%groupBubblePalette.size]}.toMap()
     }
     Column(Modifier.fillMaxSize().imePadding()){
+        if (groupRemoteTyping) Text("$groupTypingName is typing…", color=Lavender, modifier=Modifier.padding(horizontal=18.dp, vertical=4.dp), style=MaterialTheme.typography.labelSmall)
         Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(back){Icon(Icons.Default.ArrowBack,"Back")}
             if(!groupPhoto.isNullOrBlank())Avatar(groupPhoto,Modifier.size(42.dp).clickable{if(g.str("status")=="ACCEPTED")editingGroup=true})
@@ -828,6 +983,22 @@ private val groupBubblePalette = listOf(
                                     else->SelectionContainer { Text(m.str("body"),color=Color.White) }
                                 }
                             }
+                            if(!m.bool("viewOnce")){
+                                val reactions=m.array("reactions").map{it.jsonObject}
+                                Row(horizontalArrangement=Arrangement.spacedBy(2.dp)){
+                                    listOf("❤️","🔥","😈","😂","👀","👍").forEach{emoji->
+                                        val count=reactions.count{it.str("emoji")==emoji}
+                                        TextButton(onClick={vm.runTask{
+                                            ApiClient.request("group-chats/$id/messages/${m.str("id")}/reactions",HttpMethod.Post,buildJsonObject{put("emoji",emoji)})
+                                            messages=ApiClient.request("group-chats/$id/messages").jsonArray
+                                        }},contentPadding=PaddingValues(horizontal=2.dp,vertical=0.dp)){
+                                            Text(emoji+(if(count>0)" $count" else ""),style=MaterialTheme.typography.labelSmall,color=Lavender)
+                                        }
+                                    }
+                                }
+                            }
+                            Text(chatMessageTimestamp(m.str("createdAt")), color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
+                            if(mine) Text("✓ Delivered", color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -886,9 +1057,30 @@ private val groupBubblePalette = listOf(
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
 }
 
-@Composable fun PremiumScreen(vm:AppViewModel){var sub by remember{mutableStateOf<JsonObject?>(null)};var pendingChange by remember{mutableStateOf<String?>(null)};var changing by remember{mutableStateOf(false)};val premium=(sub?.str("tier")?:vm.user.value?.str("subscription"))=="PREMIUM";LaunchedEffect(Unit){vm.runTask{sub=ApiClient.request("subscription").jsonObject}};Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){Header("Premium","Own the night");Column(Modifier.padding(18.dp).glassCard()){Icon(Icons.Default.Diamond,null,tint=Lavender,modifier=Modifier.size(54.dp));Text(if(premium)"YOU'RE PREMIUM"else"PREMIUM",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Text(if(premium)"Every Premium feature is unlocked."else"Wider discovery, advanced filters and read receipts.",color=Muted,modifier=Modifier.padding(vertical=10.dp));listOf("See more people across a larger radius","Use advanced discovery filters","Know when your messages are read","Support an independent, adults-only community").forEach{Row(Modifier.padding(vertical=6.dp)){Icon(Icons.Default.CheckCircle,null,tint=HotPink);Spacer(Modifier.width(8.dp));Text(it)}};Spacer(Modifier.height(16.dp));NeonButton(if(premium)"Manage membership"else"Upgrade to Premium",!changing){pendingChange=if(premium)"downgrade"else"upgrade"}};Text("Payments in this build use the server’s demo subscription flow. Google Play Billing must be configured before public sale.",color=Muted,style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(24.dp))};pendingChange?.let{change->AlertDialog(onDismissRequest={pendingChange=null},title={Text(if(change=="upgrade")"Upgrade to Premium?"else"Manage membership")},text={Text(if(change=="upgrade")"Unlock Premium features for your AFTRHRS account."else"Current plan: Premium. Downgrading restores the 25 km limit and turns off Premium-only controls.")},dismissButton={TextButton({pendingChange=null}){Text("Cancel")}},confirmButton={ElectricButton(onClick={pendingChange=null;changing=true;vm.runTask{try{val result=ApiClient.request("subscription/demo-$change",HttpMethod.Post).jsonObject;sub=ApiClient.request("subscription").jsonObject;vm.refresh();vm.error.value=result.strOrNull("warning")?:if(change=="upgrade")"Premium activated."else"Your plan is now Free."}finally{changing=false}}}){Text(if(change=="upgrade")"Upgrade"else"Downgrade to Free")}})}}
+@Composable fun PremiumScreen(vm:AppViewModel){var sub by remember{mutableStateOf<JsonObject?>(null)};var pendingChange by remember{mutableStateOf<String?>(null)};var changing by remember{mutableStateOf(false)};val premium=(sub?.str("tier")?:vm.user.value?.str("subscription"))=="PREMIUM";LaunchedEffect(vm.user.value?.str("subscription")){vm.runTask{sub=ApiClient.request("subscription").jsonObject}};Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){Header("Premium","Own the night");Column(Modifier.padding(18.dp).glassCard()){Icon(Icons.Default.Diamond,null,tint=Lavender,modifier=Modifier.size(54.dp));Text(if(premium)"YOU'RE PREMIUM"else"PREMIUM",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Text(if(premium)"Every Premium feature is unlocked."else"Wider discovery, advanced filters and read receipts.",color=Muted,modifier=Modifier.padding(vertical=10.dp));listOf("See more people across a larger radius","Use advanced discovery filters","Know when your messages are read","Support an independent, adults-only community").forEach{Row(Modifier.padding(vertical=6.dp)){Icon(Icons.Default.CheckCircle,null,tint=HotPink);Spacer(Modifier.width(8.dp));Text(it)}};Spacer(Modifier.height(16.dp));NeonButton(if(premium)"Manage membership"else"Upgrade to Premium",!changing){pendingChange=if(premium)"downgrade"else"upgrade"}};Text("Payments in this build use the server’s demo subscription flow. Google Play Billing must be configured before public sale.",color=Muted,style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(24.dp))};pendingChange?.let{change->AlertDialog(onDismissRequest={pendingChange=null},title={Text(if(change=="upgrade")"Upgrade to Premium?"else"Manage membership")},text={Text(if(change=="upgrade")"Unlock Premium features for your AFTRHRS account."else"Current plan: Premium. Downgrading restores the 25 km limit and turns off Premium-only controls.")},dismissButton={TextButton({pendingChange=null}){Text("Cancel")}},confirmButton={ElectricButton(onClick={pendingChange=null;changing=true;vm.runTask{try{val result=ApiClient.request("subscription/demo-$change",HttpMethod.Post).jsonObject;sub=ApiClient.request("subscription").jsonObject;vm.refresh();vm.error.value=result.strOrNull("warning")?:if(change=="upgrade")"Premium activated."else"Your plan is now Free."}finally{changing=false}}}){Text(if(change=="upgrade")"Upgrade"else"Downgrade to Free")}})}}
 
-@Composable fun MeScreen(vm:AppViewModel,lockEnabled:Boolean,setLock:(Boolean)->Unit){val context=LocalContext.current;fun openLegal(url:String){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url))) }.onFailure{vm.error.value="Unable to open this page."}};val u=vm.user.value;val profile=u?.objectOrNull("profile");val isAdmin=u?.str("role") in setOf("ADMIN","SUPER_ADMIN");var editor by remember{mutableStateOf(false)};var galleries by remember{mutableStateOf(false)};var partners by remember{mutableStateOf(false)};var appIcons by remember{mutableStateOf(false)};var privacy by remember{mutableStateOf(false)};var profileViews by remember{mutableStateOf(false)};var adminPanel by remember{mutableStateOf(false)};var selectedProfile by remember{mutableStateOf<String?>(null)};selectedProfile?.let{ProfileScreen(vm,it){selectedProfile=null};return};if(profileViews){ProfileViewsScreen(vm,{profileViews=false}){id->profileViews=false;selectedProfile=id};return};if(adminPanel&&isAdmin){AdminReviewScreen(vm){adminPanel=false};return};Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){Header("Me","Your profile and privacy");Column(Modifier.padding(horizontal=18.dp).glassCard()){Row(verticalAlignment=Alignment.CenterVertically){Avatar(u?.array("photos")?.firstOrNull()?.let{it as? JsonObject}?.strOrNull("url"),Modifier.size(82.dp));Spacer(Modifier.width(14.dp));Column{Text(profile?.str("displayName")?.takeIf{it.isNotBlank()}?:"AFTRHRS member",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Text(u?.str("email").orEmpty(),color=Muted);Text(u?.str("verification").orEmpty(),color=Lavender)}}};SettingsItem(Icons.Default.Edit,"Edit profile","Photos, bio, identity and interests"){editor=true};SettingsItem(Icons.Default.Visibility,"Profile views",if(u?.str("subscription")=="PREMIUM")"See visitors from the last 7 days"else"See your 4 most recent visitors"){profileViews=true};if(isAdmin)SettingsItem(Icons.Default.AdminPanelSettings,"Admin reviews","Approve or reject photos and identity submissions"){adminPanel=true};SettingsItem(Icons.Default.Collections,"Shared galleries","Manage private photo access"){galleries=true};SettingsItem(Icons.Default.Lock,"App Lock",if(lockEnabled)"On" else"Off"){setLock(!lockEnabled)};SettingsItem(Icons.Default.Apps,"Discreet app icon",if(u?.str("subscription")=="PREMIUM")"Choose your home-screen icon"else"Premium feature"){appIcons=true};SettingsItem(Icons.Default.Link,"Linked partners","Invite, confirm and manage partners"){partners=true};SettingsItem(Icons.Default.PrivacyTip,"Privacy settings","Visibility, requests, receipts and discovery"){privacy=true};SettingsItem(Icons.Default.Description,"Privacy Policy","aftrhrs.co.za/privacy"){openLegal("https://aftrhrs.co.za/privacy")};SettingsItem(Icons.Default.Description,"End User Licence Agreement","aftrhrs.co.za/eula"){openLegal("https://aftrhrs.co.za/eula")};SettingsItem(Icons.Default.Logout,"Sign out",null){vm.logout()};Spacer(Modifier.height(24.dp))};if(editor)ProfileEditor(vm){editor=false};if(galleries)SharedGalleries(vm){galleries=false};if(partners)LinkedPartners(vm,{partners=false}){id->partners=false;selectedProfile=id};if(appIcons)AppIconPicker(u?.str("subscription")=="PREMIUM"){appIcons=false};if(privacy)PrivacySettings(vm){privacy=false}}
+@Composable fun MeScreen(vm:AppViewModel,lockEnabled:Boolean,setLock:(Boolean)->Unit){val context=LocalContext.current;fun openLegal(url:String){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url))) }.onFailure{vm.error.value="Unable to open this page."}};val u=vm.user.value;val profile=u?.objectOrNull("profile");val isAdmin=u?.str("role") in setOf("ADMIN","SUPER_ADMIN");val canCustomizeIcon=vm.entitlements.value?.bool("customAppIcons") == true || (vm.entitlements.value != null && u?.str("subscription")=="PREMIUM");var editor by remember{mutableStateOf(false)};var galleries by remember{mutableStateOf(false)};var partners by remember{mutableStateOf(false)};var appIcons by remember{mutableStateOf(false)};var privacy by remember{mutableStateOf(false)};var profileViews by remember{mutableStateOf(false)};var adminPanel by remember{mutableStateOf(false)};var deletePrompt by remember{mutableStateOf(false)};var deletingAccount by remember{mutableStateOf(false)};var deleteConfirmation by remember{mutableStateOf("")};var selectedProfile by remember{mutableStateOf<String?>(null)};selectedProfile?.let{ProfileScreen(vm,it){selectedProfile=null};return};if(profileViews){ProfileViewsScreen(vm,{profileViews=false}){id->profileViews=false;selectedProfile=id};return};if(adminPanel&&isAdmin){AdminReviewScreen(vm){adminPanel=false};return};Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){Header("Me","Your profile and privacy");Column(Modifier.padding(horizontal=18.dp).glassCard()){Row(verticalAlignment=Alignment.CenterVertically){Avatar(u?.array("photos")?.firstOrNull()?.let{it as? JsonObject}?.strOrNull("url"),Modifier.size(82.dp));Spacer(Modifier.width(14.dp));Column{Text(profile?.str("displayName")?.takeIf{it.isNotBlank()}?:"AFTRHRS member",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Text(u?.str("email").orEmpty(),color=Muted);Text(u?.str("verification").orEmpty(),color=Lavender)}}};SettingsItem(Icons.Default.Edit,"Edit profile","Photos, bio, identity and interests"){editor=true};SettingsItem(Icons.Default.Visibility,"Profile views",if(u?.str("subscription")=="PREMIUM")"See visitors from the last 7 days"else"See your 4 most recent visitors"){profileViews=true};if(isAdmin)SettingsItem(Icons.Default.AdminPanelSettings,"Admin reviews","Approve or reject photos and identity submissions"){adminPanel=true};SettingsItem(Icons.Default.Collections,"Shared galleries","Manage private photo access"){galleries=true};SettingsItem(Icons.Default.Lock,"App Lock",if(lockEnabled)"On" else"Off"){setLock(!lockEnabled)};SettingsItem(Icons.Default.Apps,"Discreet app icon",if(canCustomizeIcon)"Choose your home-screen icon"else"Premium feature"){appIcons=true};SettingsItem(Icons.Default.Link,"Linked partners","Invite, confirm and manage partners"){partners=true};SettingsItem(Icons.Default.PrivacyTip,"Privacy settings","Visibility, requests, receipts and discovery"){privacy=true};SettingsItem(Icons.Default.Description,"Privacy Policy","aftrhrs.co.za/privacy"){openLegal("https://aftrhrs.co.za/privacy")};SettingsItem(Icons.Default.Description,"End User Licence Agreement","aftrhrs.co.za/eula"){openLegal("https://aftrhrs.co.za/eula")};SettingsItem(Icons.Default.DeleteForever,"Delete account","Permanently close your AFTRHRS account"){deletePrompt=true};SettingsItem(Icons.Default.Logout,"Sign out",null){vm.logout()};Spacer(Modifier.height(24.dp))};if(editor)ProfileEditor(vm){editor=false};if(galleries)SharedGalleries(vm){galleries=false};if(partners)LinkedPartners(vm,{partners=false}){id->partners=false;selectedProfile=id};if(appIcons)AppIconPicker(canCustomizeIcon){appIcons=false};if(privacy)PrivacySettings(vm){privacy=false};if(deletePrompt)AlertDialog(
+    onDismissRequest={if(!deletingAccount)deletePrompt=false},
+    title={Text("Delete your AFTRHRS account?")},
+    text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+        Text("This closes your account, hides your profile, cancels your AFTRHRS membership and removes your identity verification evidence. Some information may be retained under the Privacy Policy for legal and safety purposes.")
+        Text("Deleting your account does not automatically cancel a subscription billed by Google Play. Manage any Play subscription separately.")
+        Text("Type DELETE to confirm.",fontWeight=FontWeight.Bold)
+        OutlinedTextField(deleteConfirmation,{deleteConfirmation=it},label={Text("Confirmation")},singleLine=true,modifier=Modifier.fillMaxWidth())
+    }},
+    dismissButton={TextButton(onClick={deletePrompt=false;deleteConfirmation=""},enabled=!deletingAccount){Text("Keep account")}},
+    confirmButton={ElectricButton(onClick={
+        deletingAccount=true
+        vm.runTask {
+            try {
+                ApiClient.request("account/delete",HttpMethod.Post)
+                deletePrompt=false
+                deleteConfirmation=""
+                vm.logout()
+            } finally { deletingAccount=false }
+        }
+    },enabled=!deletingAccount&&deleteConfirmation=="DELETE"){Text(if(deletingAccount)"Deleting…"else"Delete account")}}
+)}
 
 private fun profileViewTime(value:String?):String?=value?.let{runCatching{DateUtils.getRelativeTimeSpanString(Instant.parse(it).toEpochMilli(),System.currentTimeMillis(),DateUtils.MINUTE_IN_MILLIS).toString()}.getOrNull()}
 
@@ -981,18 +1173,21 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
 @Composable private fun PrivacySettings(vm:AppViewModel,dismiss:()->Unit){
     val user=vm.user.value
     val preference=user?.objectOrNull("preference")
-    val isPremium=user?.str("subscription")=="PREMIUM"
+    var canBrowsePrivately by remember { mutableStateOf(false) }
+    LaunchedEffect(vm.entitlements.value) {
+        canBrowsePrivately = vm.entitlements.value?.bool("privateProfileViewing") == true
+    }
     fun initial(key:String,default:Boolean)=preference?.get(key)?.jsonPrimitive?.booleanOrNull?:default
-    var showAge by remember{mutableStateOf(initial("showAge",true))};var showPosition by remember{mutableStateOf(initial("showPosition",true))};var hideOnline by remember{mutableStateOf(initial("hideOnline",false))};var hideDistance by remember{mutableStateOf(initial("hideDistance",false))};var pauseDiscovery by remember{mutableStateOf(initial("pauseDiscovery",false))};var browsePrivately by remember{mutableStateOf(isPremium&&initial("browsePrivately",false))};var markChatted by remember{mutableStateOf(initial("markChattedOnGrid",true))};var showUnread by remember{mutableStateOf(initial("showGridMessageCount",true))};var allowRequests by remember{mutableStateOf(initial("allowRequests",true))};var readReceipts by remember{mutableStateOf(initial("allowReadReceipts",true))};var notifications by remember{mutableStateOf(initial("notifications",true))};var preview by remember{mutableStateOf(preference?.strOrNull("notificationPreview")?:"PRIVATE")};var saving by remember{mutableStateOf(false)}
+    var showAge by remember{mutableStateOf(initial("showAge",true))};var showPosition by remember{mutableStateOf(initial("showPosition",true))};var hideOnline by remember{mutableStateOf(initial("hideOnline",false))};var hideDistance by remember{mutableStateOf(initial("hideDistance",false))};var pauseDiscovery by remember{mutableStateOf(initial("pauseDiscovery",false))};var browsePrivately by remember{mutableStateOf(initial("browsePrivately",false))};var markChatted by remember{mutableStateOf(initial("markChattedOnGrid",true))};var showUnread by remember{mutableStateOf(initial("showGridMessageCount",true))};var allowRequests by remember{mutableStateOf(initial("allowRequests",true))};var readReceipts by remember{mutableStateOf(initial("allowReadReceipts",true))};var notifications by remember{mutableStateOf(initial("notifications",true))};var preview by remember{mutableStateOf(preference?.strOrNull("notificationPreview")?:"PRIVATE")};var saving by remember{mutableStateOf(false)}
     val notificationPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){}
     ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=760.dp).verticalScroll(rememberScrollState()).padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
         Text("Privacy & safety",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White)
-        PrivacySection("Visibility"){PrivacyToggle("Show my age",showAge){showAge=it};PrivacyToggle("Show my position",showPosition){showPosition=it};PrivacyToggle("Hide online status",hideOnline){hideOnline=it};PrivacyToggle("Hide my distance",hideDistance){hideDistance=it};PrivacyToggle("Pause discovery",pauseDiscovery){pauseDiscovery=it};PrivacyToggle("Browse privately",browsePrivately,isPremium){browsePrivately=it};if(!isPremium)Text("Private browsing requires Premium.",color=Muted,style=MaterialTheme.typography.bodySmall)}
+        PrivacySection("Visibility"){PrivacyToggle("Show my age",showAge){showAge=it};PrivacyToggle("Show my position",showPosition){showPosition=it};PrivacyToggle("Hide online status",hideOnline){hideOnline=it};PrivacyToggle("Hide my distance",hideDistance){hideDistance=it};PrivacyToggle("Pause discovery",pauseDiscovery){pauseDiscovery=it};PrivacyToggle("Browse privately",browsePrivately,canBrowsePrivately){browsePrivately=it};if(!canBrowsePrivately)Text("Private browsing requires Premium.",color=Muted,style=MaterialTheme.typography.bodySmall)}
         PrivacySection("The Grid"){PrivacyToggle("Mark profiles I've chatted with",markChatted){markChatted=it};PrivacyToggle("Show unread message counts",showUnread){showUnread=it};Text("These indicators are only visible to you.",color=Muted,style=MaterialTheme.typography.bodySmall)}
         PrivacySection("Connections"){PrivacyToggle("Allow message requests",allowRequests){allowRequests=it};PrivacyToggle("Share read receipts",readReceipts){readReceipts=it}}
         PrivacySection("Notifications"){PrivacyToggle("Allow notifications",notifications){notifications=it;if(it&&Build.VERSION.SDK_INT>=33)notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)};Text("Notification previews",color=if(notifications)Color.White else Muted,modifier=Modifier.padding(top=5.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(preview=="PRIVATE",{preview="PRIVATE"},label={Text("Private")},enabled=notifications);FilterChip(preview=="FULL",{preview="FULL"},label={Text("Full")},enabled=notifications)}}
         Text("Your exact coordinates are never shown to other members. Private browsing hides profile visits and requires Premium. Android notification permission can also be changed in system settings.",color=Muted,style=MaterialTheme.typography.bodySmall)
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(dismiss,Modifier.weight(1f)){Text("Cancel")};ElectricButton(onClick={saving=true;vm.runTask{try{ApiClient.request("preferences",HttpMethod.Patch,buildJsonObject{put("showAge",showAge);put("showPosition",showPosition);put("hideOnline",hideOnline);put("hideDistance",hideDistance);put("pauseDiscovery",pauseDiscovery);put("browsePrivately",isPremium&&browsePrivately);put("markChattedOnGrid",markChatted);put("showGridMessageCount",showUnread);put("allowRequests",allowRequests);put("allowReadReceipts",readReceipts);put("notifications",notifications);put("notificationPreview",preview)});vm.refresh();Presence.reconnect();dismiss()}finally{saving=false}}},modifier=Modifier.weight(1f),enabled=!saving){if(saving)CircularProgressIndicator(Modifier.size(20.dp),color=Color.White,strokeWidth=2.dp)else Text("Save")}}
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(dismiss,Modifier.weight(1f)){Text("Cancel")};ElectricButton(onClick={saving=true;vm.runTask{try{ApiClient.request("preferences",HttpMethod.Patch,buildJsonObject{put("showAge",showAge);put("showPosition",showPosition);put("hideOnline",hideOnline);put("hideDistance",hideDistance);put("pauseDiscovery",pauseDiscovery);put("browsePrivately",canBrowsePrivately&&browsePrivately);put("markChattedOnGrid",markChatted);put("showGridMessageCount",showUnread);put("allowRequests",allowRequests);put("allowReadReceipts",readReceipts);put("notifications",notifications);put("notificationPreview",preview)});vm.refresh();Presence.reconnect();dismiss()}finally{saving=false}}},modifier=Modifier.weight(1f),enabled=!saving){if(saving)CircularProgressIndicator(Modifier.size(20.dp),color=Color.White,strokeWidth=2.dp)else Text("Save")}}
         Spacer(Modifier.height(28.dp))
     }}
 }
@@ -1009,7 +1204,7 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
     var height by remember{mutableStateOf(profile?.get("heightCm")?.jsonPrimitive?.intOrNull?.toString().orEmpty())};var weight by remember{mutableStateOf(profile?.get("weightKg")?.jsonPrimitive?.intOrNull?.toString().orEmpty())};var hivStatus by remember{mutableStateOf(profile?.strOrNull("hivStatus")?:"Do not show")};var hivDate by remember{mutableStateOf(profile?.strOrNull("hivLastTestDate")?.take(10).orEmpty())};var prep by remember{mutableStateOf(profile?.strOrNull("prepStatus").orEmpty())};var visible by remember{mutableStateOf(profile?.get("visible")?.jsonPrimitive?.booleanOrNull?:true)}
     val social=profile?.objectOrNull("socialLinks");var instagram by remember{mutableStateOf(social?.strOrNull("instagram").orEmpty())};var facebook by remember{mutableStateOf(social?.strOrNull("facebook").orEmpty())};var tiktok by remember{mutableStateOf(social?.strOrNull("tiktok").orEmpty())};var xLink by remember{mutableStateOf(social?.strOrNull("x").orEmpty())};var snapchat by remember{mutableStateOf(social?.strOrNull("snapchat").orEmpty())};var website by remember{mutableStateOf(social?.strOrNull("website").orEmpty())};var saving by remember{mutableStateOf(false)}
     val context=LocalContext.current
-    val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty())vm.runTask{try{val limit=if(vm.user.value?.str("subscription")=="PREMIUM")10 else 5;require(uris.size+photos.size<=limit){"Your plan allows $limit profile photos. Select up to ${(limit-photos.size).coerceAtLeast(0)} more."};uris.forEach{uploadFileFromUri(context,it,"profiles/photos","photo")}}finally{vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}}}
+    val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty())vm.runTask{try{val limit=vm.entitlements.value?.int("maxProfilePhotos")?:5;require(uris.size+photos.size<=limit){"Your plan allows $limit profile photos. Select up to ${(limit-photos.size).coerceAtLeast(0)} more."};uris.forEach{uploadFileFromUri(context,it,"profiles/photos","photo")}}finally{vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}}}
     fun makePrimary(photo:JsonObject){photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/${photo.str("id")}/primary",HttpMethod.Patch);vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}}
     fun movePhoto(from:Int,to:Int){if(to !in photos.indices||from==to)return;val next=photos.toMutableList().apply{add(to,removeAt(from))};photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/reorder",HttpMethod.Patch,buildJsonObject{put("photoIds",buildJsonArray{next.forEach{add(it.jsonObject.str("id"))}})});vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}}
     val genderOptions=listOf("Male","Cis Male","Trans Male","Non-Binary","Man","Woman","Non-binary","Not specified");val intentionOptions=listOf("Friends","Networking","Fun","Relationship","The Love of My Life","DL");val pronounOptions=listOf("He/Him/His","She/Her/Hers","They/Them/Theirs","Ze/Hir/Hirs","Ze/Zir/Zirs","Use my name only","Ask me","Prefer not to say");val tribeOptions=listOf("Bear","Clean Cut","Daddy","Discreet","Geek","Interracial","Jock","Leather","Otter","Poz","Rugged","Trans","Twink","Sober");val kinkOptions=listOf("Group","Couples","One on One","Oral Only","Threesomes","Public","BDSM","Slave/Master","Toy Fun")
@@ -1119,3 +1314,9 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
     }
     opened?.let{SharedGalleryViewer(it,vm){opened=null}}
 }
+
+private fun chatMessageTimestamp(raw:String):String = runCatching {
+    val date=java.time.Instant.parse(raw)
+    java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm",java.util.Locale.getDefault())
+        .withZone(java.time.ZoneId.systemDefault()).format(date)
+}.getOrElse { raw }
