@@ -343,6 +343,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val typingEventRevision=Presence.typingRevision.intValue
     var remoteTyping by remember(id){mutableStateOf(false)}
     var typingDots by remember(id){mutableIntStateOf(1)}
+    var text by remember{mutableStateOf("")}
     LaunchedEffect(id,typingEventRevision){
         remoteTyping=Presence.typingConversation.value==id
         if(remoteTyping){
@@ -363,7 +364,6 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     DisposableEffect(id){onDispose{Presence.sendTyping(id,false)}}
     var messages by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))}
     var viewedProfile by remember{mutableStateOf<String?>(null)}
-    var text by remember{mutableStateOf("")}
     var replyingTo by remember { mutableStateOf<JsonObject?>(null) }
     var attach by remember{mutableStateOf(false)}
     var cameraFile by remember{mutableStateOf<File?>(null)}
