@@ -505,7 +505,11 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                             load()
                         }
                     },
-                    reply = { message -> replyingTo = message }
+                    reply = { message -> replyingTo = message },
+                    react = { message -> vm.runTask {
+                        ApiClient.request("conversations/$id/messages/${message.str("id")}/flame",HttpMethod.Post)
+                        load()
+                    } }
                 )
             }
         }
@@ -586,7 +590,7 @@ private fun replySnippet(m:JsonObject):String = when {
     m.str("body").startsWith("LOCATION:") -> "Shared location"
     else -> m.str("body").take(120)
 }
-@Composable private fun MessageBubble(m:JsonObject,me:String?,canSeeReadReceipts:Boolean=false,openGallery:(String)->Unit={},openOnce:(String)->Unit={},reply:(JsonObject)->Unit={}){
+@Composable private fun MessageBubble(m:JsonObject,me:String?,canSeeReadReceipts:Boolean=false,openGallery:(String)->Unit={},openOnce:(String)->Unit={},reply:(JsonObject)->Unit={},react:(JsonObject)->Unit={}){
     val mine=m.str("senderId")==me
     val body=m.str("body")
     val kind=m.str("kind").uppercase()
@@ -650,6 +654,16 @@ private fun replySnippet(m:JsonObject):String = when {
                     Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)
                 }
                 else -> SelectionContainer { ChatLinkPreview(body) }
+            }
+            if(!m.bool("viewOnce")){
+                val reactions=m.array("reactions")
+                val reactedByMe=reactions.any{it.jsonObject.str("userId")==me}
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                    TextButton(onClick={react(m)},contentPadding=PaddingValues(horizontal=4.dp,vertical=0.dp)){
+                        Text(if(reactedByMe)"🔥"else"♧",color=Lavender)
+                        if(reactions.isNotEmpty())Text(" ${reactions.size}",color=Lavender)
+                    }
+                }
             }
             if(mine && !m.bool("viewOnce")){
                 val read = canSeeReadReceipts && m.array("reads").isNotEmpty()
