@@ -388,6 +388,8 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var text by remember{mutableStateOf("")}
     var replyingTo by remember { mutableStateOf<JsonObject?>(null) }
     var attach by remember{mutableStateOf(false)}
+    var pendingChatPhotos by remember(id){mutableStateOf<List<Uri>>(emptyList())}
+    var sendingChatPhotos by remember(id){mutableStateOf(false)}
     var cameraFile by remember{mutableStateOf<File?>(null)}
     var chooseGallery by remember{mutableStateOf(false)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
@@ -430,7 +432,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     }
     val quickieVideoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val quickiePhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
-    val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty())vm.runTask{try{require(uris.size<=10){"Choose up to 10 chat photos at a time."};uris.forEach{uploadFileFromUri(context,it,"conversations/$id/images")}}finally{load()}}}
+    val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty()){pendingChatPhotos=uris.take(10);if(uris.size>10)vm.error.value="Only the first 10 images were selected."}}
     val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->if(saved)cameraFile?.let(::upload)}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
     val cameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)openCamera()else vm.error.value="Camera permission is required to take a photo."}
@@ -536,6 +538,40 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         }
         }
     }
+    if(pendingChatPhotos.isNotEmpty())AlertDialog(
+        onDismissRequest={if(!sendingChatPhotos)pendingChatPhotos=emptyList()},
+        title={Text("Send ${pendingChatPhotos.size} photo${if(pendingChatPhotos.size==1)"" else "s"}?")},
+        text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Text("Review your selection. Remove any photo before sending.",color=Muted)
+            LazyColumn(Modifier.heightIn(max=340.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                items(pendingChatPhotos.size){index->
+                    val uri=pendingChatPhotos[index]
+                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                        AsyncImage(uri,null,Modifier.size(76.dp).clip(RoundedCornerShape(10.dp)),contentScale=ContentScale.Crop)
+                        Text("Photo ${index+1}",Modifier.weight(1f))
+                        IconButton({pendingChatPhotos=pendingChatPhotos.filterIndexed{i,_->i!=index}},enabled=!sendingChatPhotos){
+                            Icon(Icons.Default.Close,"Remove photo")
+                        }
+                    }
+                }
+            }
+            if(sendingChatPhotos)LinearProgressIndicator(Modifier.fillMaxWidth())
+        }},
+        dismissButton={TextButton({pendingChatPhotos=emptyList()},enabled=!sendingChatPhotos){Text("Cancel")}},
+        confirmButton={TextButton(onClick={
+            if(!sendingChatPhotos){
+                val selection=pendingChatPhotos.toList()
+                sendingChatPhotos=true
+                vm.runTask{
+                    try{
+                        selection.forEach{uploadFileFromUri(context,it,"conversations/$id/images")}
+                        pendingChatPhotos=emptyList()
+                        load()
+                    }finally{sendingChatPhotos=false}
+                }
+            }
+        },enabled=!sendingChatPhotos&&pendingChatPhotos.isNotEmpty()){Text(if(sendingChatPhotos)"Sending…"else"Send ${pendingChatPhotos.size}")}}
+    )
     if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
