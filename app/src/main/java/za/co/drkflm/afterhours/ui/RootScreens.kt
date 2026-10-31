@@ -60,11 +60,15 @@ import java.time.LocalDate
         else Presence.disconnect()
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer); Presence.disconnect() }
     }
-    LaunchedEffect(lifecycleOwner, presenceAllowed) {
-        if (presenceAllowed) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+    // Refresh the account for all signed-in members, including those awaiting
+    // verification. Refresh immediately on foreground, then every 30 seconds.
+    // Presence itself remains gated by verification and App Lock.
+    val sessionActive = vm.phase.value == SessionPhase.SignedIn
+    LaunchedEffect(lifecycleOwner, sessionActive) {
+        if (sessionActive) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
-                delay(30_000)
                 runCatching { vm.refresh() }
+                delay(30_000)
             }
         }
     }
