@@ -106,7 +106,7 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
         radius = if (advanced && synced == 0f) 0f else synced.coerceIn(1f, radiusMax.toFloat())
         items = ApiClient.request(discoveryPath(radius.toInt(), criteria, advanced)).jsonObject.array("items")
     }
-    LaunchedEffect(vm.user.value?.str("subscription")) {
+    LaunchedEffect(vm.user.value?.str("subscription"), vm.entitlements.value) {
         vm.runTask { loading = true; try { syncRadius() } finally { loading = false } }
     }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
