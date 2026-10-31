@@ -492,6 +492,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 MessageBubble(
                     messages[i].jsonObject,
                     vm.user.value?.str("id"),
+                    canSeeReadReceipts = vm.user.value?.str("subscription") == "PREMIUM",
                     openGallery = { galleryId ->
                         vm.runTask {
                             openedGallery = ApiClient.request("private-galleries/$galleryId/view").jsonObject
@@ -585,7 +586,7 @@ private fun replySnippet(m:JsonObject):String = when {
     m.str("body").startsWith("LOCATION:") -> "Shared location"
     else -> m.str("body").take(120)
 }
-@Composable private fun MessageBubble(m:JsonObject,me:String?,openGallery:(String)->Unit={},openOnce:(String)->Unit={},reply:(JsonObject)->Unit={}){
+@Composable private fun MessageBubble(m:JsonObject,me:String?,canSeeReadReceipts:Boolean=false,openGallery:(String)->Unit={},openOnce:(String)->Unit={},reply:(JsonObject)->Unit={}){
     val mine=m.str("senderId")==me
     val body=m.str("body")
     val kind=m.str("kind").uppercase()
@@ -649,6 +650,15 @@ private fun replySnippet(m:JsonObject):String = when {
                     Text("Tap to open",color=Lavender,style=MaterialTheme.typography.labelSmall)
                 }
                 else -> SelectionContainer { ChatLinkPreview(body) }
+            }
+            if(mine && !m.bool("viewOnce")){
+                val read = canSeeReadReceipts && m.array("reads").isNotEmpty()
+                Text(
+                    if(read)"✓✓ Read" else "✓ Sent",
+                    color=if(read)Lavender else Muted,
+                    style=MaterialTheme.typography.labelSmall,
+                    modifier=Modifier.align(Alignment.End).padding(top=5.dp)
+                )
             }
         }
     }
