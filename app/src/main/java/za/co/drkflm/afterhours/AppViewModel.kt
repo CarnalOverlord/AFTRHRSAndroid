@@ -5,6 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.ktor.http.HttpMethod
 import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import za.co.drkflm.afterhours.data.*
@@ -25,12 +27,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return u.str("role") in listOf("ADMIN", "SUPER_ADMIN") || u.str("verification") == "APPROVED"
     }
 
+    private val refreshMutex = Mutex()
+    private var sessionGeneration = 0L
     init { restore() }
     fun restore() = viewModelScope.launch {
         runCatching { refresh() }.onSuccess { phase.value = SessionPhase.SignedIn; reportPlatformVisit(); refreshUnread(); runCatching { PushNotifications.register() } }
             .onFailure { phase.value = SessionPhase.SignedOut }
     }
-    suspend fun refresh() { user.value = ApiClient.request("auth/me").jsonObject }
+    suspend fun refresh() = refreshMutex.withLock {
+        val generation = sessionGeneration
+        try {
+            val latest = ApiClient.request("auth/me").jsonObject
+            if (generation == sessionGeneration && phase.value != SessionPhase.SignedOut) user.value = latest
+            else if (generation == sessionGeneration && phase.value == SessionPhase.SignedOut) user.value = latest
+        } catch (e: ApiException) {
+            // Only an explicit authentication failure invalidates the local session.
+            // Network failures and temporary server errors must not sign members out.
+            if (generation == sessionGeneration && e.message?.contains("Unauthenticated", ignoreCase = true) == true) {
+                sessionGeneration++
+                user.value = null
+                unread.intValue = 0
+                phase.value = SessionPhase.SignedOut
+            }
+            throw e
+        }
+    }
     private suspend fun reportPlatformVisit() {
         runCatching { ApiClient.request("platform-visit", HttpMethod.Post, obj("platform" to "android")) }
     }
@@ -40,7 +61,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun register(email: String, password: String, name: String, birthDate: String, consent: Boolean) = runTask {
         ApiClient.request("auth/register", HttpMethod.Post, obj("email" to email, "password" to password, "displayName" to name, "dateOfBirth" to birthDate, "consent" to consent)); refresh(); phase.value = SessionPhase.SignedIn; reportPlatformVisit(); runCatching { PushNotifications.register() }
     }
-    fun logout() = runTask { runCatching { PushNotifications.unregister() }; runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
+    fun logout() = runTask { sessionGeneration++; runCatching { PushNotifications.unregister() }; runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
     fun routePush(conversationId:String?,groupId:String?){
         when { !conversationId.isNullOrBlank() -> pendingConversation.value=conversationId; !groupId.isNullOrBlank() -> pendingGroup.value=groupId }
     }
