@@ -714,10 +714,10 @@ private fun replySnippet(m:JsonObject):String = when {
                     }
                 }
             }
-            if(mine && !m.bool("viewOnce")){
+            if(mine){
                 val read = canSeeReadReceipts && m.array("reads").isNotEmpty()
                 Text(
-                    if(read)"✓✓ Read" else "✓ Sent",
+                    if(read)"✓✓ Read" else "✓ Delivered",
                     color=if(read)Lavender else Muted,
                     style=MaterialTheme.typography.labelSmall,
                     modifier=Modifier.align(Alignment.End).padding(top=5.dp)
@@ -981,6 +981,7 @@ private val groupBubblePalette = listOf(
                                     else->SelectionContainer { Text(m.str("body"),color=Color.White) }
                                 }
                             }
+                            if(mine) Text("✓ Delivered", color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
                         }
                     }
                     Spacer(Modifier.height(8.dp))
