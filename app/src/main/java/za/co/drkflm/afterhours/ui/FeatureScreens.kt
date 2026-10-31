@@ -177,6 +177,9 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
     BackHandler(onBack=back)
     var p by remember{mutableStateOf<JsonObject?>(null)}
     var safety by remember{mutableStateOf(false)}
+    var reportWithBlock by remember(id){mutableStateOf<Boolean?>(null)}
+    var reportReason by remember(id){mutableStateOf("Fake Profile")}
+    var reportDetails by remember(id){mutableStateOf("")}
     var liked by remember(id){mutableStateOf(false)}
     var liking by remember(id){mutableStateOf(false)}
     val scope=rememberCoroutineScope()
@@ -257,16 +260,42 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
     if(safety)AlertDialog(
         onDismissRequest={safety=false},
         title={Text("Safety actions")},
-        text={Text("Choose what you want to do. Reports are reviewed by the AFTRHRS moderation team, not in the app.")},
-        confirmButton={
-            Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
-                TextButton(onClick={safety=false;vm.runTask{ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id));vm.error.value="Member blocked."}}){Text("Block")}
-                TextButton(onClick={safety=false;vm.runTask{ApiClient.request("reports",HttpMethod.Post,obj("userId" to id,"reason" to "OTHER","details" to "Reported from Android app"));vm.error.value="Report submitted."}}){Text("Report")}
-                TextButton(onClick={safety=false;vm.runTask{ApiClient.request("reports",HttpMethod.Post,obj("userId" to id,"reason" to "OTHER","details" to "Reported from Android app"));ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id));vm.error.value="Report submitted and member blocked."}}){Text("Block & report")}
-            }
-        },
+        text={Text("Choose whether to block this member, submit a report, or do both.")},
+        confirmButton={Column{
+            TextButton(onClick={safety=false;vm.runTask{ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id));vm.error.value="Member blocked."}}){Text("Block")}
+            TextButton(onClick={safety=false;reportWithBlock=false}){Text("Report")}
+            TextButton(onClick={safety=false;reportWithBlock=true}){Text("Block & report")}
+        }},
         dismissButton={TextButton(onClick={safety=false}){Text("Cancel")}}
     )
+    reportWithBlock?.let { blockAfterReport ->
+        val reasons=listOf("Fake Profile","Inappropriate content","Scam or commercial","Identity-based hate","Underage")
+        AlertDialog(
+            onDismissRequest={reportWithBlock=null},
+            title={Text("Report member")},
+            text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Text("Select a reason for reporting this member.")
+                reasons.forEach { reason ->
+                    Row(Modifier.fillMaxWidth().clickable{reportReason=reason},verticalAlignment=Alignment.CenterVertically){
+                        RadioButton(selected=reportReason==reason,onClick={reportReason=reason})
+                        Text(reason)
+                    }
+                }
+                OutlinedTextField(value=reportDetails,onValueChange={reportDetails=it.take(1000)},label={Text("Additional details (optional)")},modifier=Modifier.fillMaxWidth(),minLines=2,maxLines=4)
+            }},
+            confirmButton={TextButton(onClick={
+                val reason=reportReason
+                val details=reportDetails.trim()
+                reportWithBlock=null
+                vm.runTask{
+                    ApiClient.request("reports",HttpMethod.Post,obj("userId" to id,"reason" to reason,"details" to details))
+                    if(blockAfterReport)ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id))
+                    vm.error.value=if(blockAfterReport)"Report submitted and member blocked."else"Report submitted."
+                }
+            }){Text(if(blockAfterReport)"Report & block"else"Submit report")}},
+            dismissButton={TextButton(onClick={reportWithBlock=null}){Text("Cancel")}}
+        )
+    }
 }
 
 @Composable fun LikesScreen(vm:AppViewModel){var tab by remember{mutableIntStateOf(0)};var items by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))};var selected by remember{mutableStateOf<String?>(null)};suspend fun load(){val data=ApiClient.request(when(tab){0->"likes/received";1->"likes";else->"likes/matches"});items=if(data is JsonArray)data else data.jsonObject.array("items")};LaunchedEffect(tab){vm.runTask{load()}};selected?.let{ProfileScreen(vm,it){selected=null};return};Column{Header("Likes","Connections waiting in the wings");TabRow(tab){Tab(tab==0,{tab=0},text={Text("Liked you")});Tab(tab==1,{tab=1},text={Text("You liked")});Tab(tab==2,{tab=2},text={Text("Matches")})};LazyColumn{if(items.isEmpty())item{Text("No likes here yet.",color=Muted,modifier=Modifier.padding(24.dp))};items(items.size){i->val p=items[i].jsonObject;val detail=p.strOrNull("bio").visibleProfileValue()?:p.strOrNull("city").visibleProfileValue();ListItem(headlineContent={Text(p.str("displayName"),fontWeight=FontWeight.Bold)},supportingContent=detail?.let{{Text(it,maxLines=2)}},leadingContent={Avatar(p.strOrNull("photo"))},modifier=Modifier.clickable{selected=p.str("id")})}}}
