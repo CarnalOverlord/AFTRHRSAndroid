@@ -254,7 +254,19 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
             }
         }
     }
-    if(safety)AlertDialog({safety=false},title={Text("Safety actions")},text={Text("You can report this profile for review, block it so you no longer see each other, or do both.")},confirmButton={TextButton({vm.runTask{ApiClient.request("reports",HttpMethod.Post,obj("userId" to id,"reason" to "OTHER","details" to "Reported from Android app"));ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id))};safety=false}){Text("Report & block")}},dismissButton={TextButton({safety=false}){Text("Cancel")}})
+    if(safety)AlertDialog(
+        onDismissRequest={safety=false},
+        title={Text("Safety actions")},
+        text={Text("Choose what you want to do. Reports are reviewed by the AFTRHRS moderation team, not in the app.")},
+        confirmButton={
+            Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
+                TextButton(onClick={safety=false;vm.runTask{ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id));vm.error.value="Member blocked."}}){Text("Block")}
+                TextButton(onClick={safety=false;vm.runTask{ApiClient.request("reports",HttpMethod.Post,obj("userId" to id,"reason" to "OTHER","details" to "Reported from Android app"));vm.error.value="Report submitted."}}){Text("Report")}
+                TextButton(onClick={safety=false;vm.runTask{ApiClient.request("reports",HttpMethod.Post,obj("userId" to id,"reason" to "OTHER","details" to "Reported from Android app"));ApiClient.request("blocks",HttpMethod.Post,obj("userId" to id));vm.error.value="Report submitted and member blocked."}}){Text("Block & report")}
+            }
+        },
+        dismissButton={TextButton(onClick={safety=false}){Text("Cancel")}}
+    )
 }
 
 @Composable fun LikesScreen(vm:AppViewModel){var tab by remember{mutableIntStateOf(0)};var items by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))};var selected by remember{mutableStateOf<String?>(null)};suspend fun load(){val data=ApiClient.request(when(tab){0->"likes/received";1->"likes";else->"likes/matches"});items=if(data is JsonArray)data else data.jsonObject.array("items")};LaunchedEffect(tab){vm.runTask{load()}};selected?.let{ProfileScreen(vm,it){selected=null};return};Column{Header("Likes","Connections waiting in the wings");TabRow(tab){Tab(tab==0,{tab=0},text={Text("Liked you")});Tab(tab==1,{tab=1},text={Text("You liked")});Tab(tab==2,{tab=2},text={Text("Matches")})};LazyColumn{if(items.isEmpty())item{Text("No likes here yet.",color=Muted,modifier=Modifier.padding(24.dp))};items(items.size){i->val p=items[i].jsonObject;val detail=p.strOrNull("bio").visibleProfileValue()?:p.strOrNull("city").visibleProfileValue();ListItem(headlineContent={Text(p.str("displayName"),fontWeight=FontWeight.Bold)},supportingContent=detail?.let{{Text(it,maxLines=2)}},leadingContent={Avatar(p.strOrNull("photo"))},modifier=Modifier.clickable{selected=p.str("id")})}}}
