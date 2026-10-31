@@ -907,6 +907,27 @@ private val groupBubblePalette = listOf(
     suspend fun load(){messages=ApiClient.request("group-chats/$id/messages").jsonArray}
     LaunchedEffect(id){if(g.str("status")=="ACCEPTED")vm.runTask{load()}}
     LaunchedEffect(messages.size){if(messages.isNotEmpty())listState.scrollToItem(messages.lastIndex)}
+    val groupTypingRevision = Presence.typingRevision.intValue
+    var groupRemoteTyping by remember(id) { mutableStateOf(false) }
+    var groupTypingName by remember(id) { mutableStateOf("Someone") }
+    LaunchedEffect(id, groupTypingRevision) {
+        groupRemoteTyping = Presence.typingConversation.value == id
+        if (groupRemoteTyping) {
+            val sender = Presence.typingUserId.value
+            groupTypingName = g.array("members").map { it.jsonObject }
+                .firstOrNull { it.str("id") == sender }?.str("name")?.takeIf { it.isNotBlank() } ?: "Someone"
+            delay(3_500)
+            groupRemoteTyping = false
+        }
+    }
+    LaunchedEffect(id, text) {
+        if (text.isNotBlank()) {
+            Presence.sendTyping(id, true, me)
+            delay(1_600)
+            Presence.sendTyping(id, false, me)
+        } else Presence.sendTyping(id, false, me)
+    }
+    DisposableEffect(id) { onDispose { Presence.sendTyping(id, false, me) } }
     val participants=remember(messages,g){
         (g.array("members").map{it.jsonObject.str("id")}+
             messages.map{it.jsonObject.str("senderId")}).filter{it.isNotBlank()}.distinct().sorted()
@@ -915,6 +936,7 @@ private val groupBubblePalette = listOf(
         participants.mapIndexed{index,userId->userId to groupBubblePalette[index%groupBubblePalette.size]}.toMap()
     }
     Column(Modifier.fillMaxSize().imePadding()){
+        if (groupRemoteTyping) Text("$groupTypingName is typing…", color=Lavender, modifier=Modifier.padding(horizontal=18.dp, vertical=4.dp), style=MaterialTheme.typography.labelSmall)
         Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically){
             IconButton(back){Icon(Icons.Default.ArrowBack,"Back")}
             if(!groupPhoto.isNullOrBlank())Avatar(groupPhoto,Modifier.size(42.dp).clickable{if(g.str("status")=="ACCEPTED")editingGroup=true})
