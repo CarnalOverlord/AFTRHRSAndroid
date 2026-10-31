@@ -17,6 +17,7 @@ enum class SessionPhase { Loading, SignedOut, SignedIn }
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     var phase = androidx.compose.runtime.mutableStateOf(SessionPhase.Loading); private set
     var user = androidx.compose.runtime.mutableStateOf<JsonObject?>(null); private set
+    var entitlements = androidx.compose.runtime.mutableStateOf<JsonObject?>(null); private set
     var error = androidx.compose.runtime.mutableStateOf<String?>(null)
     var unread = androidx.compose.runtime.mutableIntStateOf(0); private set
     var pendingConversation = androidx.compose.runtime.mutableStateOf<String?>(null)
@@ -38,14 +39,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val generation = sessionGeneration
         try {
             val latest = ApiClient.request("auth/me").jsonObject
-            if (generation == sessionGeneration && phase.value != SessionPhase.SignedOut) user.value = latest
-            else if (generation == sessionGeneration && phase.value == SessionPhase.SignedOut) user.value = latest
+            if (generation == sessionGeneration) {
+                user.value = latest
+                val subscription = runCatching { ApiClient.request("subscription").jsonObject }.getOrNull()
+                if (generation == sessionGeneration) entitlements.value = subscription?.objectOrNull("entitlements")
+            }
         } catch (e: ApiException) {
             // Only an explicit authentication failure invalidates the local session.
             // Network failures and temporary server errors must not sign members out.
             if (generation == sessionGeneration && e.message?.contains("Unauthenticated", ignoreCase = true) == true) {
                 sessionGeneration++
                 user.value = null
+                entitlements.value = null
                 unread.intValue = 0
                 phase.value = SessionPhase.SignedOut
             }
@@ -61,7 +66,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun register(email: String, password: String, name: String, birthDate: String, consent: Boolean) = runTask {
         ApiClient.request("auth/register", HttpMethod.Post, obj("email" to email, "password" to password, "displayName" to name, "dateOfBirth" to birthDate, "consent" to consent)); refresh(); phase.value = SessionPhase.SignedIn; reportPlatformVisit(); runCatching { PushNotifications.register() }
     }
-    fun logout() = runTask { sessionGeneration++; runCatching { PushNotifications.unregister() }; runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
+    fun logout() = runTask { sessionGeneration++; runCatching { PushNotifications.unregister() }; runCatching { ApiClient.request("auth/logout", HttpMethod.Post) }; user.value = null; entitlements.value = null; unread.intValue = 0; phase.value = SessionPhase.SignedOut }
     fun routePush(conversationId:String?,groupId:String?){
         when { !conversationId.isNullOrBlank() -> pendingConversation.value=conversationId; !groupId.isNullOrBlank() -> pendingGroup.value=groupId }
     }
