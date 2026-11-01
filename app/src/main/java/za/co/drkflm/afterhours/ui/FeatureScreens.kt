@@ -664,8 +664,9 @@ private fun replySnippet(m:JsonObject):String = when {
     val mine=m.str("senderId")==me
     val body=m.str("body")
     val kind=m.str("kind").uppercase()
+    var menuOpen by remember(m.str("id")){mutableStateOf(false)}
     Row(Modifier.fillMaxWidth().padding(vertical=4.dp),horizontalArrangement=if(mine)Arrangement.End else Arrangement.Start){
-        Column(Modifier.widthIn(max=300.dp).combinedClickable(onClick={},onLongClick={reply(m)}).background(if(mine)Electric.copy(alpha=.5f)else Raised,RoundedCornerShape(18.dp)).padding(12.dp)){
+        Column(Modifier.widthIn(max=300.dp).combinedClickable(onClick={},onLongClick={menuOpen=true}).background(if(mine)Electric.copy(alpha=.5f)else Raised,RoundedCornerShape(18.dp)).padding(12.dp)){
             m.strOrNull("replyPreview")?.let { preview ->
                 Column(Modifier.fillMaxWidth().background(Color.Black.copy(alpha=.2f),RoundedCornerShape(8.dp)).padding(8.dp)){
                     Text("Reply",color=Lavender,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)
@@ -727,14 +728,28 @@ private fun replySnippet(m:JsonObject):String = when {
             }
             if(!m.bool("viewOnce")){
                 val reactions=m.array("reactions").map{it.jsonObject}
-                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(3.dp)){
+                if(reactions.isNotEmpty()) Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){
                     listOf("❤️","🔥","😈","😂","👀","👍").forEach{emoji->
                         val count=reactions.count{it.str("emoji")==emoji}
-                        TextButton(onClick={react(m,emoji)},contentPadding=PaddingValues(horizontal=2.dp,vertical=0.dp)){
-                            Text(emoji+(if(count>0)" $count" else ""),color=Lavender,style=MaterialTheme.typography.labelSmall)
+                        if(count>0) TextButton(onClick={react(m,emoji)},contentPadding=PaddingValues(horizontal=6.dp,vertical=0.dp)){
+                            Text("$emoji $count",color=Lavender,style=MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
+            }
+            DropdownMenu(expanded=menuOpen,onDismissRequest={menuOpen=false}){
+                if(!m.bool("viewOnce")){
+                    Text("React",modifier=Modifier.padding(horizontal=16.dp,vertical=8.dp),fontWeight=FontWeight.Bold)
+                    Row(Modifier.padding(horizontal=8.dp),horizontalArrangement=Arrangement.spacedBy(2.dp)){
+                        listOf("❤️","🔥","😈","😂","👀","👍").forEach{emoji->
+                            TextButton(onClick={menuOpen=false;react(m,emoji)},contentPadding=PaddingValues(horizontal=5.dp)){
+                                Text(emoji)
+                            }
+                        }
+                    }
+                    HorizontalDivider()
+                }
+                DropdownMenuItem(text={Text("Reply")},onClick={menuOpen=false;reply(m)},leadingIcon={Icon(Icons.Default.Reply,null)})
             }
             Text(chatMessageTimestamp(m.str("createdAt")), color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
             if(mine){
