@@ -1,3 +1,3 @@
 -keepattributes *Annotation*
--keep class za.co.drkflm.afterhours.model.** { *; }
+-keep class za.co.aftrhrs.model.** { *; }
 -dontwarn org.conscrypt.**

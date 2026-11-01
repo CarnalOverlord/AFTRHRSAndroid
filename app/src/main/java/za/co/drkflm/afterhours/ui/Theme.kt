@@ -1,4 +1,4 @@
-package za.co.drkflm.afterhours.ui
+package za.co.aftrhrs.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border

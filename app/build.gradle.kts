@@ -12,15 +12,15 @@ val signingFile = rootProject.file("release-signing.properties")
 val signing = Properties().apply { if (signingFile.exists()) signingFile.inputStream().use(::load) }
 
 android {
-    namespace = "za.co.drkflm.afterhours"
+    namespace = "za.co.aftrhrs"
     compileSdk = 36
 
     defaultConfig {
         applicationId = "za.co.aftrhrs"
         minSdk = 26
         targetSdk = 36
-        versionCode = 45
-        versionName = "1.2.5"
+        versionCode = 47
+        versionName = "1.2.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
@@ -73,6 +73,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.5.0")
     implementation("androidx.camera:camera-view:1.5.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.android.billingclient:billing:7.1.1")
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-messaging")
     implementation("io.socket:socket.io-client:2.1.1")

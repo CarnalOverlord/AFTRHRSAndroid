@@ -1,11 +1,11 @@
-package za.co.drkflm.afterhours.push
+package za.co.aftrhrs.push
 
 import android.Manifest
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import za.co.drkflm.afterhours.BuildConfig
+import za.co.aftrhrs.BuildConfig
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -18,10 +18,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import za.co.drkflm.afterhours.MainActivity
-import za.co.drkflm.afterhours.R
-import za.co.drkflm.afterhours.data.ApiClient
-import za.co.drkflm.afterhours.data.obj
+import za.co.aftrhrs.MainActivity
+import za.co.aftrhrs.R
+import za.co.aftrhrs.data.ApiClient
+import za.co.aftrhrs.data.obj
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 

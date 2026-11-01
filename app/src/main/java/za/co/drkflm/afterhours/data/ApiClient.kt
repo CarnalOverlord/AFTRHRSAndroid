@@ -1,4 +1,4 @@
-package za.co.drkflm.afterhours.data
+package za.co.aftrhrs.data
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body

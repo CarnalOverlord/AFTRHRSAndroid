@@ -1,4 +1,4 @@
-package za.co.drkflm.afterhours.data
+package za.co.aftrhrs.data
 
 import android.content.Context
 import android.content.SharedPreferences

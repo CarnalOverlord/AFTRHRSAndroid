@@ -1,10 +1,10 @@
-package za.co.drkflm.afterhours
+package za.co.aftrhrs
 
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
-import za.co.drkflm.afterhours.data.Network
+import za.co.aftrhrs.data.Network
 
 class AftrhrsApplication : Application() {
     override fun onCreate() {

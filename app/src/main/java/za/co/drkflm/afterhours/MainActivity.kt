@@ -1,4 +1,4 @@
-package za.co.drkflm.afterhours
+package za.co.aftrhrs
 
 import android.Manifest
 import android.content.Intent
@@ -22,7 +22,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
-import za.co.drkflm.afterhours.ui.*
+import za.co.aftrhrs.ui.*
 
 class MainActivity : FragmentActivity() {
     private var locked by mutableStateOf(false)

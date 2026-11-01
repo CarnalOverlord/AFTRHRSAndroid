@@ -1,4 +1,4 @@
-package za.co.drkflm.afterhours.ui
+package za.co.aftrhrs.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -9,7 +9,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -34,16 +33,15 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.ktor.http.HttpMethod
 import kotlinx.serialization.json.*
-import za.co.drkflm.afterhours.AppViewModel
-import za.co.drkflm.afterhours.R
-import za.co.drkflm.afterhours.SessionPhase
-import za.co.drkflm.afterhours.data.ApiClient
-import za.co.drkflm.afterhours.data.obj
+import za.co.aftrhrs.AppViewModel
+import za.co.aftrhrs.R
+import za.co.aftrhrs.SessionPhase
+import za.co.aftrhrs.data.ApiClient
+import za.co.aftrhrs.data.obj
 import java.io.File
 import java.time.LocalDate
 import kotlin.coroutines.resume

@@ -1,4 +1,4 @@
-package za.co.drkflm.afterhours
+package za.co.aftrhrs
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -13,8 +13,8 @@ import kotlinx.coroutines.delay
 import io.socket.client.IO
 import io.socket.client.Socket
 import kotlinx.serialization.json.*
-import za.co.drkflm.afterhours.data.*
-import za.co.drkflm.afterhours.push.PushNotifications
+import za.co.aftrhrs.data.*
+import za.co.aftrhrs.push.PushNotifications
 
 enum class SessionPhase { Loading, SignedOut, SignedIn }
 
