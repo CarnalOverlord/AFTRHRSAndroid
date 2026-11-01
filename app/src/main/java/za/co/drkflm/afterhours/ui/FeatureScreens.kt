@@ -963,6 +963,7 @@ private val groupBubblePalette = listOf(
     var messages by remember(id){mutableStateOf<JsonArray>(JsonArray(emptyList()))}
     var text by remember(id){mutableStateOf("")}
     var replyingTo by remember(id){mutableStateOf<JsonObject?>(null)}
+    var groupMenuOpen by remember(id){mutableStateOf<String?>(null)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
     var showGroupMenu by remember{mutableStateOf(false)}
     var groupTitle by remember(id){mutableStateOf(g.str("title"))}
@@ -1048,7 +1049,7 @@ private val groupBubblePalette = listOf(
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=if(mine)Arrangement.End else Arrangement.Start){
                         Column(Modifier.widthIn(max=300.dp)){
                             Text(m.str("senderName"),color=bubbleColor.copy(alpha=1f),style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)
-                            Column(Modifier.fillMaxWidth().combinedClickable(onClick={},onLongClick={replyingTo=m}).background(bubbleColor,RoundedCornerShape(18.dp)).padding(12.dp)){
+                            Column(Modifier.fillMaxWidth().combinedClickable(onClick={},onLongClick={groupMenuOpen=m.str("id")}).background(bubbleColor,RoundedCornerShape(18.dp)).padding(12.dp)){
                                 m.strOrNull("replyPreview")?.let{preview->
                                     Column(Modifier.fillMaxWidth().background(Color.Black.copy(alpha=.2f),RoundedCornerShape(8.dp)).padding(8.dp)){
                                         Text("Reply",fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelSmall,color=Color.White)
@@ -1064,17 +1065,30 @@ private val groupBubblePalette = listOf(
                             }
                             if(!m.bool("viewOnce")){
                                 val reactions=m.array("reactions").map{it.jsonObject}
-                                Row(horizontalArrangement=Arrangement.spacedBy(2.dp)){
+                                if(reactions.isNotEmpty()) Row(horizontalArrangement=Arrangement.spacedBy(3.dp)){
                                     listOf("❤️","🔥","😈","😂","👀","👍").forEach{emoji->
                                         val count=reactions.count{it.str("emoji")==emoji}
-                                        TextButton(onClick={vm.runTask{
+                                        if(count>0) TextButton(onClick={vm.runTask{
                                             ApiClient.request("group-chats/$id/messages/${m.str("id")}/reactions",HttpMethod.Post,buildJsonObject{put("emoji",emoji)})
                                             messages=ApiClient.request("group-chats/$id/messages").jsonArray
-                                        }},contentPadding=PaddingValues(horizontal=2.dp,vertical=0.dp)){
-                                            Text(emoji+(if(count>0)" $count" else ""),style=MaterialTheme.typography.labelSmall,color=Lavender)
-                                        }
+                                        }},contentPadding=PaddingValues(horizontal=5.dp)){Text("$emoji $count",color=Lavender)}
                                     }
                                 }
+                            }
+                            DropdownMenu(expanded=groupMenuOpen==m.str("id"),onDismissRequest={groupMenuOpen=null}){
+                                if(!m.bool("viewOnce")){
+                                    Text("React",modifier=Modifier.padding(12.dp),fontWeight=FontWeight.Bold)
+                                    Row(Modifier.padding(horizontal=8.dp)){
+                                        listOf("❤️","🔥","😈","😂","👀","👍").forEach{emoji->
+                                            TextButton(onClick={groupMenuOpen=null;vm.runTask{
+                                                ApiClient.request("group-chats/$id/messages/${m.str("id")}/reactions",HttpMethod.Post,buildJsonObject{put("emoji",emoji)})
+                                                messages=ApiClient.request("group-chats/$id/messages").jsonArray
+                                            }},contentPadding=PaddingValues(horizontal=5.dp)){Text(emoji)}
+                                        }
+                                    }
+                                    HorizontalDivider()
+                                }
+                                DropdownMenuItem(text={Text("Reply")},onClick={groupMenuOpen=null;replyingTo=m})
                             }
                             Text(chatMessageTimestamp(m.str("createdAt")), color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
                             if(mine) Text("✓ Delivered", color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
