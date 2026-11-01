@@ -439,6 +439,9 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var pendingChatPhotos by remember(id){mutableStateOf<List<Uri>>(emptyList())}
     var sendingChatPhotos by remember(id){mutableStateOf(false)}
     var cameraFile by remember{mutableStateOf<File?>(null)}
+    var cameraVideoFile by remember{mutableStateOf<File?>(null)}
+    var cameraChoice by remember{mutableStateOf(false)}
+    var mediaChoice by remember{mutableStateOf(false)}
     var chooseGallery by remember{mutableStateOf(false)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
     var quickiePicker by remember { mutableStateOf(false) }
@@ -481,9 +484,14 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val quickieVideoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val quickiePhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty()){pendingChatPhotos=uris.take(10);if(uris.size>10)vm.error.value="Only the first 10 images were selected."}}
-    val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->if(saved)cameraFile?.let(::upload)}
+    val videoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/images");load()}}}
+    val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->val file=cameraFile;cameraFile=null;if(saved&&file!=null)upload(file)else file?.delete()}
+    val cameraVideo=rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo()){saved->val file=cameraVideoFile;cameraVideoFile=null;if(saved&&file!=null&&file.length()>0L)upload(file)else file?.delete()}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
-    val cameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)openCamera()else vm.error.value="Camera permission is required to take a photo."}
+    fun openVideoCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.mp4");cameraVideoFile=file;cameraVideo.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
+    var captureVideo by remember{mutableStateOf(false)}
+    val cameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted){if(captureVideo)openVideoCamera()else openCamera()}else vm.error.value="Camera permission is required to capture media."}
+    fun startCamera(video:Boolean){cameraChoice=false;captureVideo=video;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED){if(video)openVideoCamera()else openCamera()}else cameraPermission.launch(Manifest.permission.CAMERA)}
     LaunchedEffect(id){
         runCatching{refreshRequest();load()}
         while(true){
@@ -627,7 +635,9 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             }
         },enabled=!sendingChatPhotos&&pendingChatPhotos.isNotEmpty()){Text(if(sendingChatPhotos)"Sending…"else"Send ${pendingChatPhotos.size}")}}
     )
-    if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)openCamera()else cameraPermission.launch(Manifest.permission.CAMERA)},photo={attach=false;photoPicker.launch("image/*")},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
+    if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;cameraChoice=true},photo={attach=false;mediaChoice=true},myMedia={attach=false;mediaChoice=true},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
+    if(cameraChoice)AlertDialog(onDismissRequest={cameraChoice=false},title={Text("Camera Photo or Video")},text={Column{TextButton(onClick={startCamera(false)}){Text("Take photo")};TextButton(onClick={startCamera(true)}){Text("Record video")}}},confirmButton={TextButton(onClick={cameraChoice=false}){Text("Cancel")}})
+    if(mediaChoice)AlertDialog(onDismissRequest={mediaChoice=false},title={Text("Photo or Video")},text={Column{TextButton(onClick={mediaChoice=false;photoPicker.launch("image/*")}){Text("Choose photos")};TextButton(onClick={mediaChoice=false;videoPicker.launch("video/*")}){Text("Choose video")}}},confirmButton={TextButton(onClick={mediaChoice=false}){Text("Cancel")}})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
     if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("One look. Then it\u0027s gone.");TextButton(onClick={startQuickieCapture(false)}){Icon(Icons.Default.PhotoCamera,null);Text(" Take photo")};TextButton(onClick={startQuickieCapture(true)}){Icon(Icons.Default.Videocam,null);Text(" Record video")};HorizontalDivider();TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Choose photo from gallery")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Choose video from gallery")}}},confirmButton={},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
@@ -822,7 +832,7 @@ private fun replySnippet(m:JsonObject):String = when {
     }
 ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=800.dp).padding(horizontal=18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(gallery.strOrNull("title")?:"Private gallery",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);val photos=gallery.array("photos");if(photos.isEmpty())Box(Modifier.fillMaxWidth().height(240.dp),contentAlignment=Alignment.Center){Text("This gallery has no photos.",color=Muted)}else LazyColumn(Modifier.heightIn(max=620.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(photos.size){index->AsyncImage(authenticatedImageModel(photos[index].jsonObject.strOrNull("url")),"Gallery photo",Modifier.fillMaxWidth().heightIn(min=260.dp,max=560.dp).clip(RoundedCornerShape(18.dp)).background(Raised),contentScale=ContentScale.Fit)}};OutlinedButton(dismiss,Modifier.fillMaxWidth()){Text("Done")};Spacer(Modifier.height(20.dp))}}}
 
-@Composable private fun AttachmentSheet(dismiss:()->Unit,vm:AppViewModel,send:(String)->Unit,camera:()->Unit,photo:()->Unit,privateGallery:()->Unit,quickie:()->Unit){
+@Composable private fun AttachmentSheet(dismiss:()->Unit,vm:AppViewModel,send:(String)->Unit,camera:()->Unit,photo:()->Unit,myMedia:()->Unit,privateGallery:()->Unit,quickie:()->Unit){
     val context=LocalContext.current
     val scope=rememberCoroutineScope()
     fun shareLocation(){scope.launch{runCatching{currentLocation(context)}.onSuccess{send("LOCATION:${it.first},${it.second}");dismiss()}.onFailure{vm.error.value=it.message?:"Location could not be shared."}}}
@@ -830,10 +840,11 @@ ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.
     ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(22.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
         Text("Share",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
         ListItem(headlineContent={Text("Quickie 😈")},supportingContent={Text("One look. Then it\u0027s gone.")},leadingContent={Icon(Icons.Default.LocalFireDepartment,null)},modifier=Modifier.clickable(onClick=quickie))
+        ListItem(headlineContent={Text("Photo or Video")},leadingContent={Icon(Icons.Default.PhotoLibrary,null)},modifier=Modifier.clickable(onClick=photo))
+        ListItem(headlineContent={Text("Camera Photo or Video")},leadingContent={Icon(Icons.Default.PhotoCamera,null)},modifier=Modifier.clickable(onClick=camera))
+        ListItem(headlineContent={Text("My Media")},leadingContent={Icon(Icons.Default.Collections,null)},modifier=Modifier.clickable(onClick=myMedia))
+        ListItem(headlineContent={Text("Share Private Gallery")},leadingContent={Icon(Icons.Default.Collections,null)},modifier=Modifier.clickable(onClick=privateGallery))
         ListItem(headlineContent={Text("Share current location")},leadingContent={Icon(Icons.Default.LocationOn,null)},modifier=Modifier.clickable{if(ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED)shareLocation()else request.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))})
-        ListItem(headlineContent={Text("Camera")},supportingContent={Text("Take a new photo")},leadingContent={Icon(Icons.Default.PhotoCamera,null)},modifier=Modifier.clickable(onClick=camera))
-        ListItem(headlineContent={Text("Photo Gallery")},supportingContent={Text("Choose an existing photo")},leadingContent={Icon(Icons.Default.PhotoLibrary,null)},modifier=Modifier.clickable(onClick=photo))
-        ListItem(headlineContent={Text("Private Gallery")},leadingContent={Icon(Icons.Default.Collections,null)},modifier=Modifier.clickable(onClick=privateGallery))
         Spacer(Modifier.height(14.dp))
     }}
 }
