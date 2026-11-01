@@ -442,13 +442,14 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var cameraVideoFile by remember{mutableStateOf<File?>(null)}
     var cameraChoice by remember{mutableStateOf(false)}
     var mediaChoice by remember{mutableStateOf(false)}
+    var myMediaOpen by remember{mutableStateOf(false)}
     var chooseGallery by remember{mutableStateOf(false)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
     var quickiePicker by remember { mutableStateOf(false) }
     var openedQuickie by remember { mutableStateOf<Pair<ByteArray,String>?>(null) }
     val listState=rememberLazyListState()
     suspend fun load(){messages=ApiClient.request("conversations/$id/messages").jsonArray;val unread=messages.map{it.jsonObject}.filter{it.str("senderId")!=vm.user.value?.str("id")}.map{it.str("id")}.filter{it.isNotBlank()};if(unread.isNotEmpty())runCatching{ApiClient.request("conversations/$id/read",HttpMethod.Post,buildJsonObject{put("messageIds",buildJsonArray{unread.forEach{add(it)}})})}}
-    fun upload(file:File){vm.runTask{ApiClient.upload("conversations/$id/images",file);load()}}
+    fun upload(file:File,video:Boolean=false){vm.runTask{try{ApiClient.upload("conversations/$id/${if(video)"videos" else "images"}",file,if(video)"video" else "image");load()}finally{file.delete()}}}
     var quickieCaptureFile by remember { mutableStateOf<File?>(null) }
     fun sendCapturedQuickie(saved:Boolean) {
         val file=quickieCaptureFile
@@ -484,9 +485,9 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val quickieVideoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val quickiePhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty()){pendingChatPhotos=uris.take(10);if(uris.size>10)vm.error.value="Only the first 10 images were selected."}}
-    val videoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/images");load()}}}
+    val videoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/videos","video");load()}}}
     val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->val file=cameraFile;cameraFile=null;if(saved&&file!=null)upload(file)else file?.delete()}
-    val cameraVideo=rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo()){saved->val file=cameraVideoFile;cameraVideoFile=null;if(saved&&file!=null&&file.length()>0L)upload(file)else file?.delete()}
+    val cameraVideo=rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo()){saved->val file=cameraVideoFile;cameraVideoFile=null;if(saved&&file!=null&&file.length()>0L)upload(file,true)else file?.delete()}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
     fun openVideoCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.mp4");cameraVideoFile=file;cameraVideo.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
     var captureVideo by remember{mutableStateOf(false)}
@@ -635,9 +636,10 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             }
         },enabled=!sendingChatPhotos&&pendingChatPhotos.isNotEmpty()){Text(if(sendingChatPhotos)"Sending…"else"Send ${pendingChatPhotos.size}")}}
     )
-    if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;cameraChoice=true},photo={attach=false;mediaChoice=true},myMedia={attach=false;mediaChoice=true},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
+    if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;cameraChoice=true},photo={attach=false;mediaChoice=true},myMedia={attach=false;myMediaOpen=true},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
     if(cameraChoice)AlertDialog(onDismissRequest={cameraChoice=false},title={Text("Camera Photo or Video")},text={Column{TextButton(onClick={startCamera(false)}){Text("Take photo")};TextButton(onClick={startCamera(true)}){Text("Record video")}}},confirmButton={TextButton(onClick={cameraChoice=false}){Text("Cancel")}})
     if(mediaChoice)AlertDialog(onDismissRequest={mediaChoice=false},title={Text("Photo or Video")},text={Column{TextButton(onClick={mediaChoice=false;photoPicker.launch("image/*")}){Text("Choose photos")};TextButton(onClick={mediaChoice=false;videoPicker.launch("video/*")}){Text("Choose video")}}},confirmButton={TextButton(onClick={mediaChoice=false}){Text("Cancel")}})
+    if(myMediaOpen)ChatLibraryPicker(vm=vm,dismiss={myMediaOpen=false},select={photoId->myMediaOpen=false;vm.runTask{ApiClient.request("conversations/$id/library-images",HttpMethod.Post,obj("photoId" to photoId));load()}})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
     if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("One look. Then it\u0027s gone.");TextButton(onClick={startQuickieCapture(false)}){Icon(Icons.Default.PhotoCamera,null);Text(" Take photo")};TextButton(onClick={startQuickieCapture(true)}){Icon(Icons.Default.Videocam,null);Text(" Record video")};HorizontalDivider();TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Choose photo from gallery")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Choose video from gallery")}}},confirmButton={},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
@@ -878,6 +880,32 @@ private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:
         }
         return ApiClient.upload(path,file,field)
     } finally { file.delete() }
+}
+@Composable private fun ChatLibraryPicker(vm:AppViewModel,dismiss:()->Unit,select:(String)->Unit){
+    var photos by remember{mutableStateOf<JsonArray?>(null)}
+    var busy by remember{mutableStateOf(false)}
+    LaunchedEffect(Unit){vm.runTask{val response=ApiClient.request("chat-library");photos=if(response is JsonArray)response else response.jsonObject.array("items")}}
+    AlertDialog(
+        onDismissRequest=dismiss,
+        title={Text("My Media")},
+        text={
+            val items=photos
+            if(items==null) Box(Modifier.fillMaxWidth().height(120.dp),contentAlignment=Alignment.Center){CircularProgressIndicator()}
+            else if(items.isEmpty()) Text("No saved chat photos yet. Save photos to My Media to reuse them in conversations.")
+            else LazyColumn(Modifier.heightIn(max=460.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                items(items.size){index->
+                    val photo=items[index].jsonObject
+                    val photoId=photo.str("id")
+                    Row(Modifier.fillMaxWidth().clickable(enabled=!busy&&photoId.isNotBlank()){busy=true;select(photoId)}.padding(vertical=6.dp),verticalAlignment=Alignment.CenterVertically){
+                        AsyncImage(authenticatedImageModel(photo.strOrNull("url")),null,Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),contentScale=ContentScale.Crop)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Send saved photo",color=Color.White)
+                    }
+                }
+            }
+        },
+        confirmButton={TextButton(onClick=dismiss){Text("Close")}}
+    )
 }
 @Composable private fun PrivateGalleryPicker(vm:AppViewModel,dismiss:()->Unit,select:(JsonObject)->Unit){var galleries by remember{mutableStateOf<JsonArray?>(null)};LaunchedEffect(Unit){vm.runTask{val response=ApiClient.request("private-galleries");galleries=if(response is JsonArray)response else response.jsonObject.array("items")}};AlertDialog(dismiss,title={Text("Share a private gallery")},text={LazyColumn(Modifier.heightIn(max=420.dp)){val items=galleries;if(items==null)item{CircularProgressIndicator()}else if(items.isEmpty())item{Text("You do not have a private gallery to share yet.",color=Muted)}else items(items.size){index->val gallery=items[index].jsonObject;ListItem(headlineContent={Text(gallery.strOrNull("title")?:gallery.strOrNull("name")?:"Private gallery")},supportingContent={Text("${gallery.array("photos").size} photos")},leadingContent={Icon(Icons.Default.Collections,null,tint=Lavender)},modifier=Modifier.clickable{select(gallery)})}}},confirmButton={TextButton(dismiss){Text("Cancel")}})}
 private suspend fun currentLocation(context:android.content.Context):Pair<Double,Double> = suspendCancellableCoroutine{cont->val client=LocationServices.getFusedLocationProviderClient(context);try{client.lastLocation.addOnSuccessListener{loc->if(loc!=null)cont.resume(loc.latitude to loc.longitude)else cont.resumeWithException(Exception("Current location is unavailable. Try again outdoors."))}.addOnFailureListener{cont.resumeWithException(it)}}catch(e:SecurityException){cont.resumeWithException(e)}}
