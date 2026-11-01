@@ -829,10 +829,10 @@ ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.
     val request=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){result->if(result.values.any{it})shareLocation()else vm.error.value="Location permission is required to share your location."}
     ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(22.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
         Text("Share",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+        ListItem(headlineContent={Text("Quickie 😈")},supportingContent={Text("One look. Then it\u0027s gone.")},leadingContent={Icon(Icons.Default.LocalFireDepartment,null)},modifier=Modifier.clickable(onClick=quickie))
         ListItem(headlineContent={Text("Share current location")},leadingContent={Icon(Icons.Default.LocationOn,null)},modifier=Modifier.clickable{if(ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED)shareLocation()else request.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))})
         ListItem(headlineContent={Text("Camera")},supportingContent={Text("Take a new photo")},leadingContent={Icon(Icons.Default.PhotoCamera,null)},modifier=Modifier.clickable(onClick=camera))
         ListItem(headlineContent={Text("Photo Gallery")},supportingContent={Text("Choose an existing photo")},leadingContent={Icon(Icons.Default.PhotoLibrary,null)},modifier=Modifier.clickable(onClick=photo))
-        ListItem(headlineContent={Text("Quickie 😈")},supportingContent={Text("One look. Then it\u0027s gone.")},leadingContent={Icon(Icons.Default.LocalFireDepartment,null)},modifier=Modifier.clickable(onClick=quickie))
         ListItem(headlineContent={Text("Private Gallery")},leadingContent={Icon(Icons.Default.Collections,null)},modifier=Modifier.clickable(onClick=privateGallery))
         Spacer(Modifier.height(14.dp))
     }}
