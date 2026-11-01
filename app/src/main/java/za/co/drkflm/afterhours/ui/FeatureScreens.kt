@@ -443,6 +443,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var cameraChoice by remember{mutableStateOf(false)}
     var mediaChoice by remember{mutableStateOf(false)}
     var myMediaOpen by remember{mutableStateOf(false)}
+    var myMediaQuickie by remember{mutableStateOf(false)}
     var chooseGallery by remember{mutableStateOf(false)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
     var quickiePicker by remember { mutableStateOf(false) }
@@ -643,13 +644,13 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             }
         },enabled=!sendingChatPhotos&&pendingChatPhotos.isNotEmpty()){Text(if(sendingChatPhotos)"Sending…"else"Send ${pendingChatPhotos.size}")}}
     )
-    if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;cameraChoice=true},photo={attach=false;mediaChoice=true},myMedia={attach=false;myMediaOpen=true},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
+    if(attach)AttachmentSheet(dismiss={attach=false},vm=vm,send={body->vm.runTask{ApiClient.request("conversations/$id/messages",HttpMethod.Post,obj("body" to body,"kind" to "TEXT"));load()}},camera={attach=false;cameraChoice=true},photo={attach=false;mediaChoice=true},myMedia={attach=false;myMediaQuickie=false;myMediaOpen=true},privateGallery={attach=false;chooseGallery=true},quickie={attach=false;quickiePicker=true})
     if(cameraChoice)AlertDialog(onDismissRequest={cameraChoice=false},title={Text("Camera Photo or Video")},text={Column{TextButton(onClick={startCamera(false)}){Text("Take photo")};TextButton(onClick={startCamera(true)}){Text("Record video")}}},confirmButton={TextButton(onClick={cameraChoice=false}){Text("Cancel")}})
     if(mediaChoice)AlertDialog(onDismissRequest={mediaChoice=false},title={Text("Photo or Video")},text={Column{TextButton(onClick={mediaChoice=false;photoPicker.launch("image/*")}){Text("Choose photos")};TextButton(onClick={mediaChoice=false;videoPicker.launch("video/*")}){Text("Choose video")}}},confirmButton={TextButton(onClick={mediaChoice=false}){Text("Cancel")}})
-    if(myMediaOpen)ChatLibraryPicker(vm=vm,dismiss={myMediaOpen=false},select={photoId->myMediaOpen=false;vm.runTask{ApiClient.request("conversations/$id/library-images",HttpMethod.Post,obj("photoId" to photoId));load()}})
+    if(myMediaOpen)ChatLibraryPicker(vm=vm,dismiss={myMediaOpen=false},quickie=myMediaQuickie,select={photoId->myMediaOpen=false;vm.runTask{ApiClient.request("conversations/$id/${if(myMediaQuickie)"library-quickie" else "library-images"}",HttpMethod.Post,obj("photoId" to photoId));load()}})
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
-    if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("One look. Then it\u0027s gone.");TextButton(onClick={startQuickieCapture(false)}){Icon(Icons.Default.PhotoCamera,null);Text(" Take photo")};TextButton(onClick={startQuickieCapture(true)}){Icon(Icons.Default.Videocam,null);Text(" Record video")};HorizontalDivider();TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Choose photo from gallery")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Choose video from gallery")}}},confirmButton={},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
+    if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("One look. Then it\u0027s gone.");TextButton(onClick={startQuickieCapture(false)}){Icon(Icons.Default.PhotoCamera,null);Text(" Take photo")};TextButton(onClick={startQuickieCapture(true)}){Icon(Icons.Default.Videocam,null);Text(" Record video")};HorizontalDivider();TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Choose photo from gallery")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Choose video from gallery")};HorizontalDivider();TextButton(onClick={quickiePicker=false;myMediaQuickie=true;myMediaOpen=true}){Icon(Icons.Default.Collections,null);Text(" Choose from My Media")}}},confirmButton={},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
     openedQuickie?.let { media -> QuickieViewer(media){openedQuickie=null} }
 }
 private fun replySnippet(m:JsonObject):String = when {
@@ -904,13 +905,13 @@ private suspend fun saveAndSendUri(context:Context,uri:Uri,conversationId:String
         ApiClient.request("conversations/$conversationId/library-images",HttpMethod.Post,obj("photoId" to mediaId))
     }finally{file.delete()}
 }
-@Composable private fun ChatLibraryPicker(vm:AppViewModel,dismiss:()->Unit,select:(String)->Unit){
+@Composable private fun ChatLibraryPicker(vm:AppViewModel,dismiss:()->Unit,quickie:Boolean=false,select:(String)->Unit){
     var photos by remember{mutableStateOf<JsonArray?>(null)}
     var busy by remember{mutableStateOf(false)}
     LaunchedEffect(Unit){vm.runTask{val response=ApiClient.request("chat-library");photos=if(response is JsonArray)response else response.jsonObject.array("items")}}
     AlertDialog(
         onDismissRequest=dismiss,
-        title={Text("My Media")},
+        title={Text(if(quickie)"Quickie from My Media 😈" else "My Media")},
         text={
             val items=photos
             if(items==null) Box(Modifier.fillMaxWidth().height(120.dp),contentAlignment=Alignment.Center){CircularProgressIndicator()}
@@ -922,7 +923,7 @@ private suspend fun saveAndSendUri(context:Context,uri:Uri,conversationId:String
                     Row(Modifier.fillMaxWidth().clickable(enabled=!busy&&photoId.isNotBlank()){busy=true;select(photoId)}.padding(vertical=6.dp),verticalAlignment=Alignment.CenterVertically){
                         if(photo.str("url").endsWith(".mp4")) Box(Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)).background(Raised),contentAlignment=Alignment.Center){Icon(Icons.Default.PlayCircle,"Video",tint=Lavender)} else AsyncImage(authenticatedImageModel(photo.strOrNull("url")),null,Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),contentScale=ContentScale.Crop)
                         Spacer(Modifier.width(12.dp))
-                        Text(if(photo.str("url").endsWith(".mp4"))"Send saved video" else "Send saved photo",color=Color.White)
+                        Text(if(quickie)"Send as Quickie 😈" else if(photo.str("url").endsWith(".mp4"))"Send saved video" else "Send saved photo",color=Color.White)
                     }
                 }
             }
