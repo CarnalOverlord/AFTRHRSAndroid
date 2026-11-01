@@ -449,7 +449,14 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var openedQuickie by remember { mutableStateOf<Pair<ByteArray,String>?>(null) }
     val listState=rememberLazyListState()
     suspend fun load(){messages=ApiClient.request("conversations/$id/messages").jsonArray;val unread=messages.map{it.jsonObject}.filter{it.str("senderId")!=vm.user.value?.str("id")}.map{it.str("id")}.filter{it.isNotBlank()};if(unread.isNotEmpty())runCatching{ApiClient.request("conversations/$id/read",HttpMethod.Post,buildJsonObject{put("messageIds",buildJsonArray{unread.forEach{add(it)}})})}}
-    fun upload(file:File,video:Boolean=false){vm.runTask{try{ApiClient.upload("conversations/$id/${if(video)"videos" else "images"}",file,if(video)"video" else "image");load()}finally{file.delete()}}}
+    suspend fun saveAndSend(file:File,video:Boolean){
+        val saved=ApiClient.upload("chat-library",file,if(video)"video" else "photo").jsonObject
+        val mediaId=saved.str("id")
+        if(mediaId.isBlank())error("Media was saved but could not be added to the conversation.")
+        ApiClient.request("conversations/$id/library-images",HttpMethod.Post,obj("photoId" to mediaId))
+        load()
+    }
+    fun upload(file:File,video:Boolean=false){vm.runTask{try{saveAndSend(file,video)}finally{file.delete()}}}
     var quickieCaptureFile by remember { mutableStateOf<File?>(null) }
     fun sendCapturedQuickie(saved:Boolean) {
         val file=quickieCaptureFile
@@ -485,7 +492,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     val quickieVideoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val quickiePhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/view-once","media");load()}}}
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()){uris->if(uris.isNotEmpty()){pendingChatPhotos=uris.take(10);if(uris.size>10)vm.error.value="Only the first 10 images were selected."}}
-    val videoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{uploadFileFromUri(context,it,"conversations/$id/videos","video");load()}}}
+    val videoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let{vm.runTask{saveAndSendUri(context,it,id);load()}}}
     val camera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){saved->val file=cameraFile;cameraFile=null;if(saved&&file!=null)upload(file)else file?.delete()}
     val cameraVideo=rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo()){saved->val file=cameraVideoFile;cameraVideoFile=null;if(saved&&file!=null&&file.length()>0L)upload(file,true)else file?.delete()}
     fun openCamera(){val dir=File(context.cacheDir,"camera").apply{mkdirs()};val file=File(dir,"chat-${System.currentTimeMillis()}.jpg");cameraFile=file;camera.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))}
@@ -628,7 +635,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 sendingChatPhotos=true
                 vm.runTask{
                     try{
-                        selection.forEach{uploadFileFromUri(context,it,"conversations/$id/images")}
+                        selection.forEach{saveAndSendUri(context,it,id)}
                         pendingChatPhotos=emptyList()
                         load()
                     }finally{sendingChatPhotos=false}
@@ -881,6 +888,22 @@ private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:
         return ApiClient.upload(path,file,field)
     } finally { file.delete() }
 }
+private suspend fun saveAndSendUri(context:Context,uri:Uri,conversationId:String){
+    val mime=context.contentResolver.getType(uri)?.lowercase()?.substringBefore(";").orEmpty()
+    val video=mime.startsWith("video/")
+    val ext=when(mime){
+        "video/mp4"->"mp4";"video/quicktime"->"mov";"video/webm"->"webm"
+        "image/png"->"png";"image/webp"->"webp";else->if(video)"mp4" else "jpg"
+    }
+    val file=File.createTempFile("chat-library-upload-","."+ext,context.cacheDir)
+    try{
+        context.contentResolver.openInputStream(uri)?.use{input->file.outputStream().use{input.copyTo(it)}}?:error("Unable to read selected media.")
+        val saved=ApiClient.upload("chat-library",file,if(video)"video" else "photo").jsonObject
+        val mediaId=saved.str("id")
+        if(mediaId.isBlank())error("Media was saved but could not be sent.")
+        ApiClient.request("conversations/$conversationId/library-images",HttpMethod.Post,obj("photoId" to mediaId))
+    }finally{file.delete()}
+}
 @Composable private fun ChatLibraryPicker(vm:AppViewModel,dismiss:()->Unit,select:(String)->Unit){
     var photos by remember{mutableStateOf<JsonArray?>(null)}
     var busy by remember{mutableStateOf(false)}
@@ -891,15 +914,15 @@ private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:
         text={
             val items=photos
             if(items==null) Box(Modifier.fillMaxWidth().height(120.dp),contentAlignment=Alignment.Center){CircularProgressIndicator()}
-            else if(items.isEmpty()) Text("No saved chat photos yet. Save photos to My Media to reuse them in conversations.")
+            else if(items.isEmpty()) Text("No saved photos or videos yet. Media you send from your device is saved here automatically.")
             else LazyColumn(Modifier.heightIn(max=460.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
                 items(items.size){index->
                     val photo=items[index].jsonObject
                     val photoId=photo.str("id")
                     Row(Modifier.fillMaxWidth().clickable(enabled=!busy&&photoId.isNotBlank()){busy=true;select(photoId)}.padding(vertical=6.dp),verticalAlignment=Alignment.CenterVertically){
-                        AsyncImage(authenticatedImageModel(photo.strOrNull("url")),null,Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),contentScale=ContentScale.Crop)
+                        if(photo.str("url").endsWith(".mp4")) Box(Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)).background(Raised),contentAlignment=Alignment.Center){Icon(Icons.Default.PlayCircle,"Video",tint=Lavender)} else AsyncImage(authenticatedImageModel(photo.strOrNull("url")),null,Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),contentScale=ContentScale.Crop)
                         Spacer(Modifier.width(12.dp))
-                        Text("Send saved photo",color=Color.White)
+                        Text(if(photo.str("url").endsWith(".mp4"))"Send saved video" else "Send saved photo",color=Color.White)
                     }
                 }
             }
