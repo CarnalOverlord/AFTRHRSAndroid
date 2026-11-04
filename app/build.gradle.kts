@@ -48,6 +48,7 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    packaging.resources.excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -79,6 +80,8 @@ dependencies {
     implementation("com.android.billingclient:billing:7.1.1")
     implementation("com.amplifyframework.ui:liveness:1.13.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    // Keep Ktor's OkHttp SSE integration aligned with Amplify Liveness' OkHttp 5 runtime.
+    implementation(platform("com.squareup.okhttp3:okhttp-bom:5.4.0"))
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-messaging")
     implementation("io.socket:socket.io-client:2.1.1")
