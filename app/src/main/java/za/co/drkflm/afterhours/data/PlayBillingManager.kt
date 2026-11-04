@@ -35,7 +35,7 @@ class PlayBillingManager(context: Context, private val onPurchases: (List<Purcha
         }).build()
         client.queryProductDetailsAsync(params) { result, response ->
             if (result.responseCode != BillingClient.BillingResponseCode.OK) { onError("Unable to load membership plans: ${result.debugMessage}"); return@queryProductDetailsAsync }
-            val found = response.associateBy { it.productId }
+            val found = response.productDetailsList.associateBy { it.productId }
             val prices = ids.mapNotNull { (plan, id) ->
                 val product = found[id] ?: return@mapNotNull null
                 val offer = product.subscriptionOfferDetails.orEmpty().firstOrNull() ?: return@mapNotNull null

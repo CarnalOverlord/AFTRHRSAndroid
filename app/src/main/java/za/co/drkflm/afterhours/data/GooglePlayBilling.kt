@@ -181,7 +181,7 @@ class GooglePlayBilling(
                 state = state.copy(message = billingMessage(result, "Premium plans could not be loaded from Google Play."))
                 return@queryProductDetailsAsync
             }
-            val offers = query.associateBy { it.productId }
+            val offers = query.productDetailsList.associateBy { it.productId }
             state = state.copy(
                 monthly = monthlyProductId?.let(offers::get)?.toOffer(),
                 annual = annualProductId?.let(offers::get)?.toOffer(),
