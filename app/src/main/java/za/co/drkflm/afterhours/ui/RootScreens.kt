@@ -23,7 +23,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import za.co.drkflm.afterhours.data.Presence
+import za.co.aftrhrs.data.Presence
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
@@ -100,7 +100,7 @@ import kotlin.coroutines.resume
             vm.phase.value == SessionPhase.Loading -> LaunchScreen()
             vm.phase.value == SessionPhase.SignedOut -> AuthScreen(vm)
             locked -> LockScreen(authenticating, authError, unlock)
-            !vm.canEnter -> VerificationScreen(vm)
+            !vm.canEnter -> LivenessGateScreen(vm)
             else -> MainTabs(vm, lockEnabled, setLock)
         }
         vm.error.value?.let { message -> AlertDialog(onDismissRequest={vm.error.value=null}, confirmButton={TextButton(onClick={vm.error.value=null}){Text("OK")}}, title={Text("AFTRHRS")}, text={Text(message)}) }

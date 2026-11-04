@@ -1,4 +1,4 @@
-package za.co.drkflm.afterhours.data
+package za.co.aftrhrs.data
 
 import androidx.compose.runtime.mutableIntStateOf
 import io.socket.client.IO

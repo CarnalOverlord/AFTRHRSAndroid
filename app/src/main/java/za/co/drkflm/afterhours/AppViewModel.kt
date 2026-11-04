@@ -29,7 +29,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val canEnter: Boolean get() {
         val u = user.value ?: return false
-        return u.str("role") in listOf("ADMIN", "SUPER_ADMIN") || u.str("verification") == "APPROVED"
+        if (u.str("role") in listOf("ADMIN", "SUPER_ADMIN")) return true
+        if (u["livenessRequired"]?.jsonPrimitive?.booleanOrNull != true && u.str("verification") == "APPROVED") return true
+        val profile = u.objectOrNull("profile")
+        val profileComplete = u["profileComplete"]?.jsonPrimitive?.booleanOrNull
+            ?: !profile?.str("displayName").isNullOrBlank()
+        return profileComplete && u.str("liveness") == "PASSED"
     }
 
     private val refreshMutex = Mutex()

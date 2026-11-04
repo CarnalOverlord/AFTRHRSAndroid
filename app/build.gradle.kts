@@ -48,13 +48,16 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
+    }
     kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
-    // 2025.08 is the newest stable BOM compatible with the installed API 36 / AGP 8 toolchain.
-    val composeBom = platform("androidx.compose:compose-bom:2025.08.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
     implementation("androidx.core:core-ktx:1.17.0")
@@ -74,6 +77,8 @@ dependencies {
     implementation("androidx.camera:camera-view:1.5.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.android.billingclient:billing:7.1.1")
+    implementation("com.amplifyframework.ui:liveness:1.13.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-messaging")
     implementation("io.socket:socket.io-client:2.1.1")
