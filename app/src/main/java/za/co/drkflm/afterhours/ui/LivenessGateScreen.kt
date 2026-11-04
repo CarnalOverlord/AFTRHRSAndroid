@@ -44,6 +44,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import za.co.aftrhrs.AppViewModel
+import za.co.aftrhrs.data.ApiException
 import za.co.aftrhrs.data.ApiClient
 import za.co.aftrhrs.data.objectOrNull
 import za.co.aftrhrs.data.str
@@ -74,6 +75,20 @@ fun LivenessGateScreen(vm: AppViewModel) {
             message = "A previous check is still active. You can check its result, or wait for it to expire before starting another."
         }
         vm.refresh()
+    }
+
+    suspend fun startLivenessSession() {
+        val data = ApiClient.request(
+            "liveness/session", io.ktor.http.HttpMethod.Post, buildJsonObject { }
+        ).jsonObject
+        val sessionId = data.str("sessionId")
+        val providerSessionId = data.str("providerSessionId")
+        val region = data.str("region")
+        if (sessionId.isBlank() || providerSessionId.isBlank() || region.isBlank()) {
+            throw ApiException("The liveness service returned an incomplete camera session. Please contact support.")
+        }
+        challenge = LivenessChallenge(sessionId, providerSessionId, region)
+        presentingDetector = true
     }
 
     suspend fun processResult(sessionId: String) {
@@ -109,10 +124,9 @@ fun LivenessGateScreen(vm: AppViewModel) {
             scope.launch {
                 running = true
                 try {
-                    val data = ApiClient.request("liveness/session", io.ktor.http.HttpMethod.Post,
-                        kotlinx.serialization.json.buildJsonObject { }).jsonObject
-                    challenge = LivenessChallenge(data.str("sessionId"), data.str("providerSessionId"), data.str("region"))
-                    presentingDetector = true
+                    startLivenessSession()
+                } catch (error: ApiException) {
+                    message = error.message ?: "The liveness service rejected the request. Please try again shortly."
                 } catch (_: Exception) {
                     message = "We couldn’t start the camera check. Check your connection and try again shortly."
                 } finally { running = false }
@@ -176,10 +190,9 @@ fun LivenessGateScreen(vm: AppViewModel) {
                     scope.launch {
                         running = true
                         try {
-                            val data = ApiClient.request("liveness/session", io.ktor.http.HttpMethod.Post,
-                                kotlinx.serialization.json.buildJsonObject { }).jsonObject
-                            challenge = LivenessChallenge(data.str("sessionId"), data.str("providerSessionId"), data.str("region"))
-                            presentingDetector = true
+                            startLivenessSession()
+                        } catch (error: ApiException) {
+                            message = error.message ?: "The liveness service rejected the request. Please try again shortly."
                         } catch (_: Exception) { message = "We couldn’t start the camera check. Check your connection and try again shortly." }
                         finally { running = false }
                     }
