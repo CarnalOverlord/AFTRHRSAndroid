@@ -183,6 +183,16 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
     var reportDetails by remember(id){mutableStateOf("")}
     var liked by remember(id){mutableStateOf(false)}
     var liking by remember(id){mutableStateOf(false)}
+    var fullScreenPhoto by remember(id){mutableIntStateOf(-1)}
+    if(fullScreenPhoto>=0){
+        BackHandler{fullScreenPhoto=-1}
+        androidx.compose.ui.window.Dialog(onDismissRequest={fullScreenPhoto=-1},properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
+            Box(Modifier.fillMaxSize().background(Color.Black).clickable{fullScreenPhoto=-1},contentAlignment=Alignment.Center){
+                AsyncImage(authenticatedImageModel(p?.array("photos")?.getOrNull(fullScreenPhoto)?.jsonObject?.strOrNull("url")),"Profile photo",Modifier.fillMaxSize().padding(12.dp),contentScale=ContentScale.Fit)
+                IconButton({fullScreenPhoto=-1},Modifier.align(Alignment.TopEnd).padding(12.dp).background(Color.Black.copy(alpha=.55f),CircleShape)){Icon(Icons.Default.Close,"Close full screen photo",tint=Color.White)}
+            }
+        }
+    }
     val scope=rememberCoroutineScope()
     LaunchedEffect(id){vm.runTask{val data=ApiClient.request("profiles/$id").jsonObject;p=data;liked=data.bool("liked")}}
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){
@@ -194,7 +204,7 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
                 val pagerState=androidx.compose.foundation.pager.rememberPagerState(pageCount={photos.size})
                 Box(Modifier.fillMaxWidth().height(430.dp)){
                     androidx.compose.foundation.pager.HorizontalPager(state=pagerState,modifier=Modifier.fillMaxSize()) { page ->
-                        AsyncImage(authenticatedImageModel(photos[page].jsonObject.str("url")),null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
+                        AsyncImage(authenticatedImageModel(photos[page].jsonObject.str("url")),"Profile photo",Modifier.fillMaxSize().clickable{fullScreenPhoto=page},contentScale=ContentScale.Crop)
                     }
                     if(photos.size>1){
                         Row(Modifier.align(Alignment.BottomCenter).padding(bottom=12.dp).background(Color.Black.copy(alpha=.6f),RoundedCornerShape(20.dp)).padding(horizontal=12.dp,vertical=7.dp),horizontalArrangement=Arrangement.spacedBy(7.dp),verticalAlignment=Alignment.CenterVertically){
@@ -855,7 +865,7 @@ private fun replySnippet(m:JsonObject):String = when {
             if(Build.VERSION.SDK_INT>=35 && recordingCallback!=null) runCatching { windowManager?.removeScreenRecordingCallback(recordingCallback) }
         }
     }
-ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=800.dp).padding(horizontal=18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(gallery.strOrNull("title")?:"Vault",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);val photos=gallery.array("photos");if(photos.isEmpty())Box(Modifier.fillMaxWidth().height(240.dp),contentAlignment=Alignment.Center){Text("This Vault has no photos.",color=Muted)}else LazyColumn(Modifier.heightIn(max=620.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(photos.size){index->AsyncImage(authenticatedImageModel(photos[index].jsonObject.strOrNull("url")),"Vault photo",Modifier.fillMaxWidth().heightIn(min=260.dp,max=560.dp).clip(RoundedCornerShape(18.dp)).background(Raised),contentScale=ContentScale.Fit)}};OutlinedButton(dismiss,Modifier.fillMaxWidth()){Text("Done")};Spacer(Modifier.height(20.dp))}}}
+ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=800.dp).padding(horizontal=18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(gallery.strOrNull("title")?:"Private gallery",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);val photos=gallery.array("photos");if(photos.isEmpty())Box(Modifier.fillMaxWidth().height(240.dp),contentAlignment=Alignment.Center){Text("This gallery has no photos.",color=Muted)}else LazyColumn(Modifier.heightIn(max=620.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(photos.size){index->AsyncImage(authenticatedImageModel(photos[index].jsonObject.strOrNull("url")),"Gallery photo",Modifier.fillMaxWidth().heightIn(min=260.dp,max=560.dp).clip(RoundedCornerShape(18.dp)).background(Raised),contentScale=ContentScale.Fit)}};OutlinedButton(dismiss,Modifier.fillMaxWidth()){Text("Done")};Spacer(Modifier.height(20.dp))}}}
 
 @Composable private fun AttachmentSheet(dismiss:()->Unit,vm:AppViewModel,send:(String)->Unit,camera:()->Unit,photo:()->Unit,myMedia:()->Unit,privateGallery:()->Unit,quickie:()->Unit){
     val context=LocalContext.current
@@ -960,6 +970,9 @@ private val groupBubblePalette = listOf(
     BackHandler(onBack=back)
     val id=g.str("id")
     val me=vm.user.value?.str("id")
+    var groupMembers by remember(id){mutableStateOf(g.array("members"))}
+    var pendingMembers by remember(id){mutableStateOf(g.array("invited"))}
+    var viewedMemberProfile by remember(id){mutableStateOf<String?>(null)}
     var messages by remember(id){mutableStateOf<JsonArray>(JsonArray(emptyList()))}
     var text by remember(id){mutableStateOf("")}
     var replyingTo by remember(id){mutableStateOf<JsonObject?>(null)}
@@ -971,6 +984,10 @@ private val groupBubblePalette = listOf(
     var editingGroup by remember{mutableStateOf(false)}
     var proposedTitle by remember{mutableStateOf(g.str("title"))}
     var savingGroup by remember{mutableStateOf(false)}
+    suspend fun refreshGroupMembers(){
+        val latest=ApiClient.request("group-chats").jsonArray.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject
+        if(latest!=null){groupMembers=latest.array("members");pendingMembers=latest.array("invited")}
+    }
     val context=LocalContext.current
     val groupPhotoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->
         if(uri!=null)vm.runTask{
@@ -1135,6 +1152,16 @@ private val groupBubblePalette = listOf(
                 OutlinedButton(onClick={groupPhotoPicker.launch("image/*")},enabled=!savingGroup){Text("Change picture")}
             }
             Text("All accepted participants can change the group name and picture.",color=Muted,style=MaterialTheme.typography.bodySmall)
+            GroupMemberEditor(
+                vm=vm,
+                groupId=id,
+                creatorId=g.str("creatorId"),
+                currentUserId=me,
+                members=groupMembers,
+                pending=pendingMembers,
+                openProfile={viewedMemberProfile=it},
+                refreshMembers={refreshGroupMembers()}
+            )
         }},
         confirmButton={TextButton(onClick={vm.runTask{
             savingGroup=true
@@ -1146,8 +1173,133 @@ private val groupBubblePalette = listOf(
         }},enabled=!savingGroup&&proposedTitle.trim().length in 2..60){Text("Save")}},
         dismissButton={TextButton({editingGroup=false},enabled=!savingGroup){Text("Cancel")}}
     )
+    viewedMemberProfile?.let{profileId->
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest={viewedMemberProfile=null},
+            properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false)
+        ){
+            Surface(Modifier.fillMaxSize(),color=Color(0xFF090A10)){
+                ProfileScreen(vm,profileId){viewedMemberProfile=null}
+            }
+        }
+    }
     if(confirmLeave)AlertDialog(onDismissRequest={if(!leaving)confirmLeave=false},title={Text("Leave group?")},text={Text("You will leave this group chat and stop receiving its messages.")},dismissButton={TextButton({confirmLeave=false},enabled=!leaving){Text("Cancel")}},confirmButton={TextButton({if(!leaving){leaving=true;vm.runTask{try{ApiClient.request("group-chats/$id/leave",HttpMethod.Post);confirmLeave=false;back()}finally{leaving=false}}}},enabled=!leaving){Text(if(leaving)"Leaving..." else "Leave group",color=Color(0xFFFF777E))}})
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
+}
+
+@Composable private fun GroupMemberEditor(
+    vm:AppViewModel,
+    groupId:String,
+    creatorId:String,
+    currentUserId:String?,
+    members:JsonArray,
+    pending:JsonArray,
+    openProfile:(String)->Unit,
+    refreshMembers:suspend ()->Unit
+){
+    val isCreator=currentUserId==creatorId
+    var addDialog by remember(groupId){mutableStateOf(false)}
+    var candidates by remember(groupId){mutableStateOf<JsonArray?>(null)}
+    var selected by remember(groupId){mutableStateOf(setOf<String>())}
+    var removeTarget by remember(groupId){mutableStateOf<JsonObject?>(null)}
+    var busy by remember(groupId){mutableStateOf(false)}
+    val existing=(members+pending).mapNotNull{(it as? JsonObject)?.strOrNull("id")}.toSet()
+    val available=candidates?.filter{item->(item as? JsonObject)?.strOrNull("id")?.let{it !in existing}==true}.orEmpty()
+    val capacity=(11-members.size-pending.size).coerceAtLeast(0)
+
+    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+        Text("Members (${members.size+pending.size})",Modifier.weight(1f),fontWeight=FontWeight.Bold,color=Color.White)
+        if(isCreator)TextButton(onClick={
+            vm.runTask{busy=true;try{candidates=ApiClient.request("group-chats/$groupId/eligible").jsonArray;selected=emptySet();addDialog=true}finally{busy=false}}
+        },enabled=!busy&&capacity>0){Text(if(busy)"Loading…" else "Add member")}
+    }
+    if(members.isEmpty()&&pending.isEmpty())Text("No group members found.",color=Muted)
+    LazyColumn(Modifier.fillMaxWidth().heightIn(max=230.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+        items(members.size){index->
+            val person=members[index].jsonObject
+            val personId=person.str("id")
+            Row(Modifier.fillMaxWidth().padding(vertical=3.dp),verticalAlignment=Alignment.CenterVertically){
+                Row(Modifier.weight(1f).clickable{openProfile(personId)},verticalAlignment=Alignment.CenterVertically){
+                    Avatar(person.strOrNull("photo"),Modifier.size(42.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)){
+                        Text(person.str("name"),color=Color.White,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        Text(if(personId==creatorId)"Group creator" else "Accepted member",color=Muted,style=MaterialTheme.typography.labelSmall)
+                    }
+                }
+                if(isCreator&&personId!=creatorId)TextButton({removeTarget=person}){Text("Remove",color=Color(0xFFFFB4AB))}
+            }
+        }
+        items(pending.size){index->
+            val person=pending[index].jsonObject
+            val personId=person.str("id")
+            Row(Modifier.fillMaxWidth().padding(vertical=3.dp),verticalAlignment=Alignment.CenterVertically){
+                Row(Modifier.weight(1f).clickable{openProfile(personId)},verticalAlignment=Alignment.CenterVertically){
+                    Avatar(person.strOrNull("photo"),Modifier.size(42.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)){
+                        Text(person.str("name"),color=Color.White,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        Text("Invitation pending",color=Muted,style=MaterialTheme.typography.labelSmall)
+                    }
+                }
+                if(isCreator)TextButton({removeTarget=person}){Text("Remove",color=Color(0xFFFFB4AB))}
+            }
+        }
+    }
+
+    if(addDialog)AlertDialog(
+        onDismissRequest={if(!busy)addDialog=false},
+        title={Text("Add group members")},
+        text={
+            Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+                Text("Invite mutual matches who allow requests. They must accept before joining.",color=Muted)
+                when{
+                    candidates==null->Box(Modifier.fillMaxWidth().height(100.dp),contentAlignment=Alignment.Center){CircularProgressIndicator()}
+                    available.isEmpty()->Text("No eligible members are available to add.",color=Muted)
+                    else->LazyColumn(Modifier.heightIn(max=330.dp)){
+                        items(available.size){index->
+                            val person=available[index].jsonObject
+                            val personId=person.str("id")
+                            val checked=personId in selected
+                            ListItem(
+                                headlineContent={Text(person.str("name"),color=Color.White)},
+                                leadingContent={Avatar(person.strOrNull("photo"),Modifier.size(42.dp))},
+                                trailingContent={Icon(if(checked)Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,null,tint=Lavender)},
+                                colors=ListItemDefaults.colors(containerColor=Color.Transparent),
+                                modifier=Modifier.clickable{
+                                    selected=if(checked)selected-personId else if(selected.size<capacity)selected+personId else selected
+                                }
+                            )
+                        }
+                    }
+                }
+                if(capacity>0)Text("${selected.size}/$capacity available spaces",color=Lavender,style=MaterialTheme.typography.labelSmall)
+            }
+        },
+        confirmButton={TextButton(onClick={
+            vm.runTask{
+                busy=true
+                try{
+                    selected.forEach{personId->ApiClient.request("group-chats/$groupId/invite",HttpMethod.Post,obj("userId" to personId))}
+                    refreshMembers()
+                    addDialog=false
+                }finally{busy=false}
+            }
+        },enabled=selected.isNotEmpty()&&selected.size<=capacity&&!busy){Text(if(busy)"Inviting…" else "Invite ${selected.size}")}},
+        dismissButton={TextButton({if(!busy)addDialog=false}){Text("Cancel")}}
+    )
+
+    removeTarget?.let{person->
+        AlertDialog(
+            onDismissRequest={if(!busy)removeTarget=null},
+            title={Text("Remove ${person.str("name")}?")},
+            text={Text("They will lose access to this group and its messages.")},
+            confirmButton={TextButton(onClick={
+                vm.runTask{busy=true;try{ApiClient.request("group-chats/$groupId/remove",HttpMethod.Post,obj("userId" to person.str("id")));refreshMembers();removeTarget=null}finally{busy=false}}
+            },enabled=!busy){Text("Remove",color=Color(0xFFFF777E))}},
+            dismissButton={TextButton({if(!busy)removeTarget=null}){Text("Cancel")}}
+        )
+    }
 }
 
 @Composable fun PremiumScreen(vm:AppViewModel){
@@ -1211,7 +1363,7 @@ private val groupBubblePalette = listOf(
 }
 
 
-@Composable fun MeScreen(vm:AppViewModel,lockEnabled:Boolean,setLock:(Boolean)->Unit){val context=LocalContext.current;fun openLegal(url:String){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url))) }.onFailure{vm.error.value="Unable to open this page."}};val u=vm.user.value;val profile=u?.objectOrNull("profile");val isAdmin=u?.str("role") in setOf("ADMIN","SUPER_ADMIN");val canCustomizeIcon=vm.entitlements.value?.bool("customAppIcons") == true;val identityVerified=u?.str("verification")?.equals("APPROVED",ignoreCase=true)==true;var editor by remember{mutableStateOf(false)};var galleries by remember{mutableStateOf(false)};var partners by remember{mutableStateOf(false)};var appIcons by remember{mutableStateOf(false)};var privacy by remember{mutableStateOf(false)};var profileViews by remember{mutableStateOf(false)};var adminPanel by remember{mutableStateOf(false)};var identityBadge by remember{mutableStateOf(false)};var deletePrompt by remember{mutableStateOf(false)};var deletingAccount by remember{mutableStateOf(false)};var deleteConfirmation by remember{mutableStateOf("")};var selectedProfile by remember{mutableStateOf<String?>(null)};selectedProfile?.let{ProfileScreen(vm,it){selectedProfile=null};return};if(identityBadge){OptionalIdentityVerificationScreen(vm){identityBadge=false};return};if(profileViews){ProfileViewsScreen(vm,{profileViews=false}){id->profileViews=false;selectedProfile=id};return};if(adminPanel&&isAdmin){AdminReviewScreen(vm){adminPanel=false};return};Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){Header("Me","Your profile and privacy");Column(Modifier.padding(horizontal=18.dp).glassCard()){Row(verticalAlignment=Alignment.CenterVertically){Avatar(u?.array("photos")?.firstOrNull()?.let{it as? JsonObject}?.strOrNull("url"),Modifier.size(82.dp));Spacer(Modifier.width(14.dp));Column{Text(profile?.str("displayName")?.takeIf{it.isNotBlank()}?:"AFTRHRS member",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Text(u?.str("email").orEmpty(),color=Muted);Text(u?.str("verification").orEmpty(),color=Lavender)}}};SettingsItem(Icons.Default.Edit,"Edit profile","Photos, bio, identity and interests"){editor=true};if(!identityVerified)SettingsItem(Icons.Default.VerifiedUser,"Optional ID verification","Submit ID photos to request the verified badge"){identityBadge=true};SettingsItem(Icons.Default.Visibility,"Profile views",if(u?.str("subscription")=="PREMIUM")"See visitors from the last 7 days"else"See your 4 most recent visitors"){profileViews=true};if(isAdmin)SettingsItem(Icons.Default.AdminPanelSettings,"Admin reviews","Approve or reject photos and identity submissions"){adminPanel=true};SettingsItem(Icons.Default.Collections,"My Vaults","Manage your photo vaults and shared access"){galleries=true};SettingsItem(Icons.Default.Lock,"App Lock",if(lockEnabled)"On" else"Off"){setLock(!lockEnabled)};SettingsItem(Icons.Default.Apps,"Discreet app icon",if(canCustomizeIcon)"Choose your home-screen icon"else"Premium feature"){appIcons=true};SettingsItem(Icons.Default.Link,"Linked partners","Invite, confirm and manage partners"){partners=true};SettingsItem(Icons.Default.PrivacyTip,"Privacy settings","Visibility, requests, receipts and discovery"){privacy=true};SettingsItem(Icons.Default.Description,"Privacy Policy","aftrhrs.co.za/privacy"){openLegal("https://aftrhrs.co.za/privacy")};SettingsItem(Icons.Default.Description,"End User Licence Agreement","aftrhrs.co.za/eula"){openLegal("https://aftrhrs.co.za/eula")};SettingsItem(Icons.Default.DeleteForever,"Delete account","Permanently close your AFTRHRS account"){deletePrompt=true};SettingsItem(Icons.Default.Logout,"Sign out",null){vm.logout()};Spacer(Modifier.height(24.dp))};if(editor)ProfileEditor(vm){editor=false};if(galleries)SharedGalleries(vm){galleries=false};if(partners)LinkedPartners(vm,{partners=false}){id->partners=false;selectedProfile=id};if(appIcons)AppIconPicker(canCustomizeIcon){appIcons=false};if(privacy)PrivacySettings(vm){privacy=false};if(deletePrompt)AlertDialog(
+@Composable fun MeScreen(vm:AppViewModel,lockEnabled:Boolean,setLock:(Boolean)->Unit){val context=LocalContext.current;fun openLegal(url:String){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url))) }.onFailure{vm.error.value="Unable to open this page."}};val u=vm.user.value;val profile=u?.objectOrNull("profile");val isAdmin=u?.str("role") in setOf("ADMIN","SUPER_ADMIN");val canCustomizeIcon=vm.entitlements.value?.bool("customAppIcons") == true;val identityVerified=u?.str("verification")?.equals("APPROVED",ignoreCase=true)==true;var editor by remember{mutableStateOf(false)};var galleries by remember{mutableStateOf(false)};var partners by remember{mutableStateOf(false)};var appIcons by remember{mutableStateOf(false)};var privacy by remember{mutableStateOf(false)};var profileViews by remember{mutableStateOf(false)};var adminPanel by remember{mutableStateOf(false)};var identityBadge by remember{mutableStateOf(false)};var deletePrompt by remember{mutableStateOf(false)};var deletingAccount by remember{mutableStateOf(false)};var deleteConfirmation by remember{mutableStateOf("")};var selectedProfile by remember{mutableStateOf<String?>(null)};selectedProfile?.let{ProfileScreen(vm,it){selectedProfile=null};return};if(editor){ProfileEditor(vm){editor=false};return};if(identityBadge){OptionalIdentityVerificationScreen(vm){identityBadge=false};return};if(profileViews){ProfileViewsScreen(vm,{profileViews=false}){id->profileViews=false;selectedProfile=id};return};if(adminPanel&&isAdmin){AdminReviewScreen(vm){adminPanel=false};return};Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){Header("Me","Your profile and privacy");Column(Modifier.padding(horizontal=18.dp).glassCard()){Row(verticalAlignment=Alignment.CenterVertically){Avatar(u?.array("photos")?.firstOrNull()?.let{it as? JsonObject}?.strOrNull("url"),Modifier.size(82.dp));Spacer(Modifier.width(14.dp));Column{Text(profile?.str("displayName")?.takeIf{it.isNotBlank()}?:"AFTRHRS member",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Text(u?.str("email").orEmpty(),color=Muted);Text(u?.str("verification").orEmpty(),color=Lavender)}}};SettingsItem(Icons.Default.Edit,"Edit profile","Photos, bio, identity and interests"){editor=true};if(!identityVerified)SettingsItem(Icons.Default.VerifiedUser,"Optional ID verification","Submit ID photos to request the verified badge"){identityBadge=true};SettingsItem(Icons.Default.Visibility,"Profile views",if(u?.str("subscription")=="PREMIUM")"See visitors from the last 7 days"else"See your 4 most recent visitors"){profileViews=true};if(isAdmin)SettingsItem(Icons.Default.AdminPanelSettings,"Admin reviews","Approve or reject photos and identity submissions"){adminPanel=true};SettingsItem(Icons.Default.Collections,"My Vaults","Manage your photo vaults and shared access"){galleries=true};SettingsItem(Icons.Default.Lock,"App Lock",if(lockEnabled)"On" else"Off"){setLock(!lockEnabled)};SettingsItem(Icons.Default.Apps,"Discreet app icon",if(canCustomizeIcon)"Choose your home-screen icon"else"Premium feature"){appIcons=true};SettingsItem(Icons.Default.Link,"Linked partners","Invite, confirm and manage partners"){partners=true};SettingsItem(Icons.Default.PrivacyTip,"Privacy settings","Visibility, requests, receipts and discovery"){privacy=true};SettingsItem(Icons.Default.Description,"Privacy Policy","aftrhrs.co.za/privacy"){openLegal("https://aftrhrs.co.za/privacy")};SettingsItem(Icons.Default.Description,"End User Licence Agreement","aftrhrs.co.za/eula"){openLegal("https://aftrhrs.co.za/eula")};SettingsItem(Icons.Default.DeleteForever,"Delete account","Permanently close your AFTRHRS account"){deletePrompt=true};SettingsItem(Icons.Default.Logout,"Sign out",null){vm.logout()};Spacer(Modifier.height(24.dp))};if(galleries)SharedGalleries(vm){galleries=false};if(partners)LinkedPartners(vm,{partners=false}){id->partners=false;selectedProfile=id};if(appIcons)AppIconPicker(canCustomizeIcon){appIcons=false};if(privacy)PrivacySettings(vm){privacy=false};if(deletePrompt)AlertDialog(
     onDismissRequest={if(!deletingAccount)deletePrompt=false},
     title={Text("Delete your AFTRHRS account?")},
     text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
@@ -1374,9 +1526,10 @@ private val defaultProfileAvatars = listOf(
     fun makePrimary(photo:JsonObject){photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/${photo.str("id")}/primary",HttpMethod.Patch);vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}}
     fun movePhoto(from:Int,to:Int){if(to !in photos.indices||from==to)return;val next=photos.toMutableList().apply{add(to,removeAt(from))};photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/reorder",HttpMethod.Patch,buildJsonObject{put("photoIds",buildJsonArray{next.forEach{add(it.jsonObject.str("id"))}})});vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}}
     val genderOptions=listOf("Male","Cis Male","Trans Male","Non-Binary","Man","Woman","Non-binary","Not specified");val intentionOptions=listOf("Friends","Networking","Fun","Relationship","The Love of My Life","DL");val pronounOptions=listOf("He/Him/His","She/Her/Hers","They/Them/Theirs","Ze/Hir/Hirs","Ze/Zir/Zirs","Use my name only","Ask me","Prefer not to say");val tribeOptions=listOf("Bear","Clean Cut","Daddy","Discreet","Geek","Interracial","Jock","Leather","Otter","Poz","Rugged","Trans","Twink","Sober");val kinkOptions=listOf("Group","Couples","One on One","Oral Only","Threesomes","Public","BDSM","Slave/Master","Toy Fun")
-    val editorScrollState=rememberScrollState()
-    ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=790.dp).verticalScroll(editorScrollState).overscroll(null).padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
-        Text("Edit profile",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White)
+    androidx.compose.ui.window.Dialog(onDismissRequest=dismiss,properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false)){
+    Column(Modifier.fillMaxSize().background(Panel).navigationBarsPadding().imePadding()){
+        Row(Modifier.fillMaxWidth().padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){IconButton(dismiss){Icon(Icons.Default.ArrowBack,"Back",tint=Color.White)};Text("Edit profile",Modifier.weight(1f),style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Spacer(Modifier.width(48.dp))}
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
         EditorSection("Profile photos"){
             val primaryId=photos.map{it.jsonObject}.firstOrNull{it.str("moderationStatus")=="APPROVED"}?.str("id")
             if(photos.isNotEmpty())Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(10.dp)){photos.forEachIndexed{index,item->val photo=item.jsonObject;val approved=photo.str("moderationStatus")=="APPROVED";val primary=photo.str("id")==primaryId;Column(Modifier.width(132.dp).border(if(primary)2.dp else 1.dp,if(primary)Electric else Color.White.copy(alpha=.14f),RoundedCornerShape(16.dp)).padding(5.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(4.dp)){Box{AsyncImage(authenticatedImageModel(photo.strOrNull("url")),null,Modifier.fillMaxWidth().height(142.dp).clip(RoundedCornerShape(12.dp)),contentScale=ContentScale.Crop);IconButton({photoBusy=true;vm.runTask{try{ApiClient.request("profiles/photos/${photo.str("id")}",HttpMethod.Delete);vm.refresh();photos=vm.user.value?.array("photos")?:JsonArray(emptyList())}finally{photoBusy=false}}},Modifier.align(Alignment.TopEnd).size(30.dp).background(Color.Black.copy(alpha=.7f),CircleShape),enabled=!photoBusy){Icon(Icons.Default.Close,"Remove photo",tint=Color.White,modifier=Modifier.size(17.dp))};if(primary)Text("PRIMARY",color=Color.White,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold,modifier=Modifier.align(Alignment.BottomStart).padding(6.dp).background(Electric,RoundedCornerShape(50)).padding(horizontal=7.dp,vertical=3.dp))};Text(if(approved)if(primary)"Default photo"else"Approved"else photo.str("moderationStatus").lowercase().replaceFirstChar{it.uppercase()},color=if(primary)Lavender else Muted,style=MaterialTheme.typography.labelSmall);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){IconButton({movePhoto(index,index-1)},enabled=!photoBusy&&index>0){Icon(Icons.Default.ChevronLeft,"Move left")};IconButton({movePhoto(index,index+1)},enabled=!photoBusy&&index<photos.lastIndex){Icon(Icons.Default.ChevronRight,"Move right")}};OutlinedButton({makePrimary(photo)},Modifier.fillMaxWidth(),enabled=!photoBusy&&approved&&!primary,contentPadding=PaddingValues(horizontal=5.dp,vertical=2.dp)){Icon(Icons.Default.Star,null,Modifier.size(16.dp));Text(if(primary)" Primary"else" Make primary",style=MaterialTheme.typography.labelSmall)}}}};Text("Use the arrows to arrange your photos. Your primary approved photo appears first on your profile.",color=Muted,style=MaterialTheme.typography.bodySmall);OutlinedButton({picker.launch("image/*")},Modifier.fillMaxWidth(),enabled=!photoBusy){Icon(Icons.Default.AddPhotoAlternate,null);Text(" Add profile photo")};OutlinedButton({showAvatarPicker=true},Modifier.fillMaxWidth(),enabled=!photoBusy){Icon(Icons.Default.AccountCircle,null);Text(" Choose an AFTRHRS avatar")}}
@@ -1398,12 +1551,12 @@ private val defaultProfileAvatars = listOf(
         )
         EditorSection("Your profile"){OutlinedTextField(name,{name=it.take(40)},label={Text("Display name")},modifier=Modifier.fillMaxWidth());SelectField("Gender",gender,genderOptions,select={gender=it});MultiChoiceField("Looking for",intentionOptions,intentions,3){intentions=if(it in intentions)intentions-it else intentions+it};OutlinedTextField(bio,{bio=it.take(500)},label={Text("Bio")},minLines=4,modifier=Modifier.fillMaxWidth());PrivacyToggle("Visible in discovery",visible){visible=it}}
         EditorSection("Identity"){SelectField("Identity",identity,listOf("","Gay","Bisexual","Straight"),select={identity=it});SelectField("Pronouns",pronouns,pronounOptions,select={pronouns=it});SelectField("Position",position,listOf("Prefer not to say","Top","Top / Vers","Vers","Bottom / Vers","Bottom","Side"),select={position=it});SelectField("Cut / Uncut",cut,listOf("Do not show","Cut","Uncut"),select={cut=it});SelectField("Body type",bodyType,listOf("Do not show","Toned","Average","Large","Muscular","Slim","Stocky"),select={bodyType=it});SelectField("Relationship",relationship,listOf("Do not show","Committed","Dating","Engaged","Exclusive","Married","Open Relationship","Partnered","Single"),select={relationship=it});SelectField("Catch me at",catchMeAt,listOf("","My place","Your place","Coffee shop","Public area","Other"),select={catchMeAt=it});SelectField("Explicit pictures",explicitPics,listOf("Never","Not at first","Yes Please"),select={explicitPics=it})}
-        EditorSection("About you"){SelectField("Ethnicity",race,ethnicityOptions){race=it};SelectField("Body hair",bodyHair,bodyHairOptions){bodyHair=it};SelectField("Religion",religion,religionOptions){religion=it};MultiChoiceField("Tribes",tribeOptions,tribes,3){tribes=if(it in tribes)tribes-it else tribes+it};OutlinedTextField(interests,{interests=it},label={Text("Interests, comma separated · max 12")},modifier=Modifier.fillMaxWidth());OutlinedTextField(tags,{tags=it},label={Text("Tags, comma separated · max 10")},modifier=Modifier.fillMaxWidth());MultiChoiceField("Kinks",kinkOptions,kinks,3){kinks=if(it in kinks)kinks-it else kinks+it}}
+        EditorSection("About you"){SelectField("Ethnicity",race,ethnicityOptions,select={race=it});SelectField("Body hair",bodyHair,bodyHairOptions,select={bodyHair=it});SelectField("Religion",religion,religionOptions,select={religion=it});MultiChoiceField("Tribes",tribeOptions,tribes,3){tribes=if(it in tribes)tribes-it else tribes+it};OutlinedTextField(interests,{interests=it},label={Text("Interests, comma separated · max 12")},modifier=Modifier.fillMaxWidth());OutlinedTextField(tags,{tags=it},label={Text("Tags, comma separated · max 10")},modifier=Modifier.fillMaxWidth());MultiChoiceField("Kinks",kinkOptions,kinks,3){kinks=if(it in kinks)kinks-it else kinks+it}}
         EditorSection("Physical & sexual health"){Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(height,{height=it.filter(Char::isDigit).take(3)},label={Text("Height cm")},modifier=Modifier.weight(1f));OutlinedTextField(weight,{weight=it.filter(Char::isDigit).take(3)},label={Text("Weight kg")},modifier=Modifier.weight(1f))};SelectField("HIV status",hivStatus,listOf("Do not show","Negative","Positive","Positive, Undetectable","Lets chat about it"),select={hivStatus=it});OutlinedTextField(hivDate,{hivDate=it.take(10)},label={Text("Last test date · YYYY-MM-DD")},modifier=Modifier.fillMaxWidth());SelectField("PrEP status",prep,listOf("","On PrEP","Not on PrEP"),select={prep=it})}
         EditorSection("Social links"){listOf("Instagram" to instagram,"Facebook" to facebook,"TikTok" to tiktok,"X" to xLink,"Snapchat" to snapchat,"Website" to website).forEach{(label,value)->OutlinedTextField(value,{next->when(label){"Instagram"->instagram=next;"Facebook"->facebook=next;"TikTok"->tiktok=next;"X"->xLink=next;"Snapchat"->snapchat=next;else->website=next}},label={Text("$label handle or URL")},modifier=Modifier.fillMaxWidth())}}
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(dismiss,Modifier.weight(1f)){Text("Cancel")};ElectricButton({val parsedInterests=interests.split(',').map{it.trim()}.filter{it.isNotBlank()}.distinct().take(12);val parsedTags=tags.split(',').map{it.trim().removePrefix("#")}.filter{it.isNotBlank()}.distinctBy{it.lowercase()}.take(10);saving=true;vm.runTask{try{ApiClient.request("profiles/me",HttpMethod.Patch,buildJsonObject{put("displayName",name.trim());put("bio",bio.trim());put("gender",gender);put("identity",identity);put("pronouns",pronouns);put("position",position);put("circumcisionStatus",cut);put("bodyType",bodyType);put("relationshipStatus",relationship);put("catchMeAt",catchMeAt);put("acceptExplicitPics",explicitPics);put("race",race.trim());put("bodyHair",bodyHair.trim());put("religion",religion.trim());put("clanTribe",tribes.sorted().joinToString(","));put("interests",buildJsonArray{parsedInterests.forEach{add(it)}});put("tags",buildJsonArray{parsedTags.forEach{add(it)}});put("intentions",buildJsonArray{intentions.forEach{add(it)}});put("kinks",buildJsonArray{kinks.forEach{add(it)}});put("heightCm",height.toIntOrNull()?.let{JsonPrimitive(it)}?:JsonNull);put("weightKg",weight.toIntOrNull()?.let{JsonPrimitive(it)}?:JsonNull);put("hivStatus",hivStatus);put("hivLastTestDate",hivDate.takeIf{it.isNotBlank()}?.let{JsonPrimitive(it)}?:JsonNull);put("prepStatus",prep.takeIf{it.isNotBlank()}?.let{JsonPrimitive(it)}?:JsonNull);put("visible",visible);put("socialLinks",buildJsonObject{put("instagram",instagram.trim());put("facebook",facebook.trim());put("tiktok",tiktok.trim());put("x",xLink.trim());put("snapchat",snapchat.trim());put("website",website.trim())})});vm.refresh();dismiss()}finally{saving=false}}},Modifier.weight(1f),enabled=!saving&&name.trim().length>=2){if(saving)CircularProgressIndicator(Modifier.size(20.dp),color=Color.White,strokeWidth=2.dp)else Text("Save")}}
         Spacer(Modifier.height(28.dp))
-    }}
+    }}}
 }
 
 @Composable private fun SharedGalleries(vm:AppViewModel,dismiss:()->Unit){
