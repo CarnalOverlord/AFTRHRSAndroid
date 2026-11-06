@@ -29,8 +29,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val canEnter: Boolean get() {
         val u = user.value ?: return false
-        if (u.str("role") in listOf("ADMIN", "SUPER_ADMIN")) return true
-        if (u["livenessRequired"]?.jsonPrimitive?.booleanOrNull != true && u.str("verification") == "APPROVED") return true
+        // The backend is authoritative for liveness rollout and exemptions,
+        // including staff and grandfathered ID-verified accounts.
+        if (u.str("role") in listOf("ADMIN", "SUPER_ADMIN", "MODERATOR")) return true
+        val required = u["livenessRequired"]?.jsonPrimitive?.booleanOrNull
+        if (required == false) return true
+        // Fail closed if the backend did not provide an explicit policy decision.
         val profile = u.objectOrNull("profile")
         val profileComplete = u["profileComplete"]?.jsonPrimitive?.booleanOrNull
             ?: !profile?.str("displayName").isNullOrBlank()
