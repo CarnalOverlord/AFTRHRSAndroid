@@ -1490,10 +1490,78 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
         PrivacySection("The Grid"){PrivacyToggle("Mark profiles I've chatted with",markChatted){markChatted=it};PrivacyToggle("Show unread message counts",showUnread){showUnread=it};Text("These indicators are only visible to you.",color=Muted,style=MaterialTheme.typography.bodySmall)}
         PrivacySection("Connections"){PrivacyToggle("Allow message requests",allowRequests){allowRequests=it};PrivacyToggle("Share read receipts",readReceipts){readReceipts=it}}
         PrivacySection("Notifications"){PrivacyToggle("Allow notifications",notifications){notifications=it;if(it&&Build.VERSION.SDK_INT>=33)notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)};Text("Notification previews",color=if(notifications)Color.White else Muted,modifier=Modifier.padding(top=5.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(preview=="PRIVATE",{preview="PRIVATE"},label={Text("Private")},enabled=notifications);FilterChip(preview=="FULL",{preview="FULL"},label={Text("Full")},enabled=notifications)}}
+        PrivacySection("Blocked members"){BlockedMembersManager(vm)}
         Text("Your exact coordinates are never shown to other members. Private browsing hides profile visits and requires Premium. Android notification permission can also be changed in system settings.",color=Muted,style=MaterialTheme.typography.bodySmall)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(dismiss,Modifier.weight(1f)){Text("Cancel")};ElectricButton(onClick={saving=true;vm.runTask{try{ApiClient.request("preferences",HttpMethod.Patch,buildJsonObject{put("showAge",showAge);put("showPosition",showPosition);put("hideOnline",hideOnline);put("hideDistance",hideDistance);put("pauseDiscovery",pauseDiscovery);put("browsePrivately",canBrowsePrivately&&browsePrivately);put("markChattedOnGrid",markChatted);put("showGridMessageCount",showUnread);put("allowRequests",allowRequests);put("allowReadReceipts",readReceipts);put("notifications",notifications);put("notificationPreview",preview)});vm.refresh();Presence.reconnect();dismiss()}finally{saving=false}}},modifier=Modifier.weight(1f),enabled=!saving){if(saving)CircularProgressIndicator(Modifier.size(20.dp),color=Color.White,strokeWidth=2.dp)else Text("Save")}}
         Spacer(Modifier.height(28.dp))
     }}
+}
+
+@Composable private fun BlockedMembersManager(vm:AppViewModel){
+    var expanded by remember { mutableStateOf(false) }
+    var members by remember { mutableStateOf<List<JsonObject>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var pending by remember { mutableStateOf<JsonObject?>(null) }
+    var busyId by remember { mutableStateOf<String?>(null) }
+    fun refresh(){
+        members=null
+        vm.runTask {
+            try {
+                members=ApiClient.request("blocks").jsonArray.map { it.jsonObject }
+                error=null
+            } catch(e:Exception) {
+                error=e.localizedMessage?:"Could not load blocked members."
+            }
+        }
+    }
+    TextButton(onClick={expanded=!expanded; if(!expanded)Unit else if(members==null)refresh()}){
+        Icon(Icons.Default.PersonOff,null,tint=Lavender)
+        Spacer(Modifier.width(8.dp))
+        Text(if(expanded)"Hide blocked members"else"Manage blocked members",color=Lavender)
+    }
+    if(expanded){
+        Text("Unblocking may make you visible to each other again. Deleted chats and likes won't be restored.",color=Muted,style=MaterialTheme.typography.bodySmall)
+        if(members==null && error==null) CircularProgressIndicator(Modifier.size(24.dp),color=Lavender)
+        if(error!=null){
+            Text(error!!,color=Color(0xFFFFB4AB))
+            TextButton(onClick={refresh()}){Text("Try again")}
+        }
+        if(members?.isEmpty()==true) Text("You haven't blocked anyone.",color=Muted)
+        members?.forEach { member ->
+            val id=member.str("id")
+            Row(Modifier.fillMaxWidth().padding(vertical=5.dp),verticalAlignment=Alignment.CenterVertically){
+                Text(member.str("name"),color=Color.White,modifier=Modifier.weight(1f))
+                OutlinedButton(onClick={pending=member},enabled=busyId==null){Text("Unblock")}
+            }
+        }
+    }
+    if(pending!=null){
+        val member=pending!!
+        AlertDialog(
+            onDismissRequest={if(busyId==null)pending=null},
+            title={Text("Unblock ${member.str("name")}?")},
+            text={Text("You may see each other in discovery again. Previous likes and conversations won't be restored.")},
+            confirmButton={
+                TextButton(onClick={
+                    val id=member.str("id")
+                    busyId=id
+                    vm.runTask {
+                        try {
+                            val response=ApiClient.request("blocks/$id",HttpMethod.Delete).jsonObject
+                            if(response.bool("blocked")) throw IllegalStateException("The server did not confirm unblocking.")
+                            members=members?.filterNot { it.str("id")==id }
+                            pending=null
+                            error=null
+                        } catch(e:Exception) {
+                            pending=null
+                            error=e.localizedMessage?:"Could not unblock member."
+                        } finally {busyId=null}
+                    }
+                },enabled=busyId==null){Text("Unblock")}
+            },
+            dismissButton={TextButton(onClick={pending=null},enabled=busyId==null){Text("Keep blocked")}}
+        )
+    }
 }
 
 @Composable private fun SelectField(label:String,value:String,options:List<String>,display:(String)->String={if(it.isBlank())"Not specified"else it},select:(String)->Unit){var expanded by remember{mutableStateOf(false)};ExposedDropdownMenuBox(expanded,{expanded=it}){OutlinedTextField(value=display(value),onValueChange={},readOnly=true,label={Text(label)},trailingIcon={ExposedDropdownMenuDefaults.TrailingIcon(expanded)},modifier=Modifier.fillMaxWidth().menuAnchor());ExposedDropdownMenu(expanded,{expanded=false}){options.forEach{option->DropdownMenuItem({Text(display(option))},{select(option);expanded=false})}}}}
