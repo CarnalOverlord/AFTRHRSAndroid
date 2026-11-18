@@ -33,6 +33,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -41,6 +42,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -412,6 +418,11 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var requesterId by remember(id){mutableStateOf(c.str("requestedById"))}
     var responding by remember(id){mutableStateOf(false)}
     val isIncomingRequest=requestStatus=="REQUESTED" && requesterId!=vm.user.value?.str("id")
+    var safety by remember(id){mutableStateOf(false)}
+    var reportDialog by remember(id){mutableStateOf(false)}
+    var blockAfterReport by remember(id){mutableStateOf(false)}
+    var reportReason by remember(id){mutableStateOf("Fake Profile")}
+    var reportDetails by remember(id){mutableStateOf("")}
     suspend fun refreshRequest(){
         val current=ApiClient.request("conversations").jsonArray.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject
         if(current!=null){requestStatus=current.str("status");requesterId=current.str("requestedById")}
@@ -459,7 +470,12 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var quickiePicker by remember { mutableStateOf(false) }
     var openedQuickie by remember { mutableStateOf<Pair<ByteArray,String>?>(null) }
     val listState=rememberLazyListState()
-    suspend fun load(){messages=ApiClient.request("conversations/$id/messages").jsonArray;val unread=messages.map{it.jsonObject}.filter{it.str("senderId")!=vm.user.value?.str("id")}.map{it.str("id")}.filter{it.isNotBlank()};if(unread.isNotEmpty())runCatching{ApiClient.request("conversations/$id/read",HttpMethod.Post,buildJsonObject{put("messageIds",buildJsonArray{unread.forEach{add(it)}})})}}
+    suspend fun load(){
+        if(requestStatus=="REQUESTED" && requesterId!=vm.user.value?.str("id")){messages=c.objectOrNull("lastMessage")?.let{JsonArray(listOf(it))}?:JsonArray(emptyList());return}
+        messages=ApiClient.request("conversations/$id/messages").jsonArray
+        val unread=messages.map{it.jsonObject}.filter{it.str("senderId")!=vm.user.value?.str("id")}.map{it.str("id")}.filter{it.isNotBlank()}
+        if(unread.isNotEmpty())runCatching{ApiClient.request("conversations/$id/read",HttpMethod.Post,buildJsonObject{put("messageIds",buildJsonArray{unread.forEach{add(it)}})})}
+    }
     suspend fun saveAndSend(file:File,video:Boolean){
         val saved=ApiClient.upload("chat-library",file,if(video)"video" else "photo").jsonObject
         val mediaId=saved.str("id")
@@ -516,6 +532,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         while(true){
             delay(4_000)
             runCatching{
+                if(requestStatus=="REQUESTED" && requesterId!=vm.user.value?.str("id")) return@runCatching
                 val latest=ApiClient.request("conversations/$id/messages").jsonArray
                 if(latest!=messages){
                     val previousIds=messages.map{it.jsonObject.str("id")}.toSet()
@@ -544,7 +561,14 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         if(isIncomingRequest){
             Column(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=8.dp).background(Raised,RoundedCornerShape(14.dp)).padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
                 Text("Message request",color=Lavender,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium)
-                Text("Read the message below before deciding whether to chat.",color=Color.White)
+                Text("Preview the message before deciding whether to chat.",color=Color.White)
+                val firstMessage=messages.firstOrNull()?.jsonObject
+                if(firstMessage!=null){
+                    Column(Modifier.fillMaxWidth().background(Color.Black.copy(alpha=.22f),RoundedCornerShape(10.dp)).padding(11.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                        Text(when{firstMessage.bool("viewOnce")->"Quickie 😈";firstMessage.str("kind").uppercase() in setOf("IMAGE","GIF")->"Photo";firstMessage.str("kind").uppercase()=="VIDEO"->"Video";else->firstMessage.str("body").ifBlank{"Message"}},color=Color.White,maxLines=4,overflow=TextOverflow.Ellipsis)
+                        Text(chatMessageTimestamp(firstMessage.str("createdAt")),color=Muted,style=MaterialTheme.typography.labelSmall)
+                    }
+                }else Text("Loading message preview…",color=Muted)
                 Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){
                     Button(onClick={if(!responding){responding=true;vm.runTask{try{
                         ApiClient.request("conversations/$id/accept",HttpMethod.Post)
@@ -618,6 +642,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
                 }
             }){Icon(Icons.Default.Send,"Send",tint=HotPink)}
         }
+        if(!creatorAnnouncement && !isIncomingRequest) TextButton(onClick={safety=true},modifier=Modifier.align(Alignment.CenterHorizontally)){Text("Block or report",color=Color(0xFFFFB4AB))}
         }
     }
     if(pendingChatPhotos.isNotEmpty())AlertDialog(
@@ -661,7 +686,16 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     if(chooseGallery)PrivateGalleryPicker(vm,{chooseGallery=false}){gallery->chooseGallery=false;val userId=other?.strOrNull("userId")?:other?.strOrNull("id");if(userId==null)vm.error.value="This member could not be identified." else vm.runTask{ApiClient.request("private-galleries/${gallery.str("id")}/access",HttpMethod.Post,obj("userId" to userId));load()}}
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
     if(quickiePicker) AlertDialog(onDismissRequest={quickiePicker=false},title={Text("Quickie 😈")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("One look. Then it\u0027s gone.");TextButton(onClick={startQuickieCapture(false)}){Icon(Icons.Default.PhotoCamera,null);Text(" Take photo")};TextButton(onClick={startQuickieCapture(true)}){Icon(Icons.Default.Videocam,null);Text(" Record video")};HorizontalDivider();TextButton(onClick={quickiePicker=false;quickiePhotoPicker.launch("image/*")}){Text("Choose photo from gallery")};TextButton(onClick={quickiePicker=false;quickieVideoPicker.launch("video/*")}){Text("Choose video from gallery")};HorizontalDivider();TextButton(onClick={quickiePicker=false;myMediaQuickie=true;myMediaOpen=true}){Icon(Icons.Default.Collections,null);Text(" Choose from My Media")}}},confirmButton={},dismissButton={TextButton(onClick={quickiePicker=false}){Text("Cancel")}})
-    openedQuickie?.let { media -> QuickieViewer(media){openedQuickie=null} }
+    openedQuickie?.let { media -> QuickieViewer(media,dismiss={openedQuickie=null}) }
+    if(safety)AlertDialog(onDismissRequest={safety=false},title={Text("Safety actions")},text={Text("Block this member or submit a report.")},confirmButton={Column{
+        TextButton(onClick={safety=false;vm.runTask{ApiClient.request("blocks",HttpMethod.Post,obj("userId" to (other?.strOrNull("userId")?:other?.str("id"))));back();vm.error.value="Member blocked."}}){Text("Block")}
+        TextButton(onClick={safety=false;blockAfterReport=false;reportDialog=true}){Text("Report")}
+        TextButton(onClick={safety=false;blockAfterReport=true;reportDialog=true}){Text("Report & block")}
+    }},dismissButton={TextButton(onClick={safety=false}){Text("Cancel")}})
+    if(reportDialog)AlertDialog(onDismissRequest={reportDialog=false},title={Text("Report member")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+        listOf("Fake Profile","Inappropriate content","Scam or commercial","Identity-based hate","Underage").forEach{reason->Row(Modifier.fillMaxWidth().clickable{reportReason=reason},verticalAlignment=Alignment.CenterVertically){RadioButton(reportReason==reason,{reportReason=reason});Text(reason)}}
+        OutlinedTextField(reportDetails,{reportDetails=it.take(1000)},label={Text("Details (optional)")},minLines=2,maxLines=4)
+    }},confirmButton={TextButton(onClick={reportDialog=false;vm.runTask{val target=other?.strOrNull("userId")?:other?.str("id");ApiClient.request("reports",HttpMethod.Post,obj("userId" to target,"reason" to reportReason,"details" to reportDetails.trim(),"conversationId" to id));if(blockAfterReport)ApiClient.request("blocks",HttpMethod.Post,obj("userId" to target));if(blockAfterReport)back();vm.error.value=if(blockAfterReport)"Report submitted and member blocked." else "Report submitted."}}){Text(if(blockAfterReport)"Report & block" else "Submit report")}},dismissButton={TextButton(onClick={reportDialog=false}){Text("Cancel")}})
 }
 private fun replySnippet(m:JsonObject):String = when {
     m.bool("viewOnce") -> "Quickie 😈"
@@ -764,8 +798,9 @@ private fun replySnippet(m:JsonObject):String = when {
             Text(chatMessageTimestamp(m.str("createdAt")), color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
             if(mine){
                 val read = canSeeReadReceipts && m.array("reads").isNotEmpty()
+                val delivered = m.array("deliveries").isNotEmpty()
                 Text(
-                    if(read)"✓✓ Read" else "✓ Delivered",
+                    when { read -> "✓✓ Read"; delivered -> "✓ Delivered"; else -> "✓ Sent" },
                     color=if(read)Lavender else Muted,
                     style=MaterialTheme.typography.labelSmall,
                     modifier=Modifier.align(Alignment.End).padding(top=5.dp)
@@ -774,14 +809,19 @@ private fun replySnippet(m:JsonObject):String = when {
         }
     }
 }
-@Composable private fun QuickieViewer(media:Pair<ByteArray,String>,dismiss:()->Unit){
+@Composable private fun QuickieViewer(media:Pair<ByteArray,String>,dismiss:()->Unit,quickie:Boolean=true){
     val context=LocalContext.current
+    val dialogWindow=(LocalView.current.parent as? DialogWindowProvider)?.window
+    DisposableEffect(dialogWindow,quickie){
+        if(quickie)dialogWindow?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose{if(quickie)dialogWindow?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)}
+    }
     val video=media.second.startsWith("video/")
     val temp=remember(media){if(video)File.createTempFile("quickie-",".mp4",context.cacheDir).apply{writeBytes(media.first)}else null}
     DisposableEffect(temp){onDispose{temp?.delete()}}
     androidx.compose.ui.window.Dialog(onDismissRequest=dismiss){
         Column(Modifier.fillMaxWidth().background(Panel,RoundedCornerShape(18.dp)).padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally){
-            Text("Quickie 😈",color=Lavender,fontWeight=FontWeight.Bold)
+            Text(if(quickie)"Quickie 😈" else "Group media",color=Lavender,fontWeight=FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             if(video && temp!=null) AndroidView(factory={ctx->VideoView(ctx).apply{setVideoPath(temp.absolutePath);setOnPreparedListener{it.isLooping=false;start()}}},modifier=Modifier.fillMaxWidth().height(400.dp))
             else {
@@ -789,7 +829,7 @@ private fun replySnippet(m:JsonObject):String = when {
                 if(bitmap!=null)Image(bitmap,"Quickie",Modifier.fillMaxWidth().heightIn(max=550.dp),contentScale=ContentScale.Fit)
                 else Text("Unable to display this media.",color=Muted)
             }
-            Text("One look. Then it's gone.",color=Muted)
+            if(quickie)Text("One look. Then it's gone.",color=Muted)
             TextButton(onClick=dismiss){Text("Close")}
         }
     }
@@ -916,7 +956,7 @@ private fun photosImageUrl(gallery:JsonObject,index:Int):String?=gallery.array("
         Spacer(Modifier.height(14.dp))
     }}
 }
-private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:String="image"):JsonElement{
+private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:String="image",fields:Map<String,String> = emptyMap()):JsonElement{
     val mime=context.contentResolver.getType(uri)?.lowercase()?.substringBefore(";").orEmpty()
     val extension=android.webkit.MimeTypeMap.getFileExtensionFromUrl(uri.toString()).lowercase()
     val type=when {
@@ -944,7 +984,7 @@ private suspend fun uploadFileFromUri(context:Context,uri:Uri,path:String,field:
             val maxBytes=if(type.startsWith("video/"))30L*1024*1024 else 8L*1024*1024
             if(file.length()>maxBytes) error("Quickie is too large. Maximum ${if(type.startsWith("video/"))"30 MB for video" else "8 MB for photos"}.")
         }
-        return ApiClient.upload(path,file,field)
+        return ApiClient.upload(path,file,field,fields)
     } finally { file.delete() }
 }
 private suspend fun saveAndSendUri(context:Context,uri:Uri,conversationId:String){
@@ -1011,6 +1051,10 @@ private val groupBubblePalette = listOf(
     var replyingTo by remember(id){mutableStateOf<JsonObject?>(null)}
     var groupMenuOpen by remember(id){mutableStateOf<String?>(null)}
     var openedGallery by remember{mutableStateOf<JsonObject?>(null)}
+    var openedGroupMedia by remember{mutableStateOf<Pair<ByteArray,String>?>(null)}
+    var openedGroupQuickie by remember{mutableStateOf(false)}
+    var groupAttachments by remember{mutableStateOf(false)}
+    var groupVaultPicker by remember{mutableStateOf(false)}
     var showGroupMenu by remember{mutableStateOf(false)}
     var groupTitle by remember(id){mutableStateOf(g.str("title"))}
     var groupPhoto by remember(id){mutableStateOf(g.strOrNull("photoUrl"))}
@@ -1033,11 +1077,18 @@ private val groupBubblePalette = listOf(
             }finally{savingGroup=false}
         }
     }
+    var groupUploadQuickie by remember{mutableStateOf(false)}
     var confirmLeave by remember{mutableStateOf(false)}
     var leaving by remember{mutableStateOf(false)}
     val listState=rememberLazyListState()
-    suspend fun load(){messages=ApiClient.request("group-chats/$id/messages").jsonArray}
-    LaunchedEffect(id){if(g.str("status")=="ACCEPTED")vm.runTask{load()}}
+    suspend fun load(){messages=ApiClient.request("group-chats/$id/messages").jsonArray;val unread=messages.map{it.jsonObject}.filter{it.str("senderId")!=me}.map{it.str("id")}.filter{it.isNotBlank()};if(unread.isNotEmpty())runCatching{ApiClient.request("group-chats/$id/read",HttpMethod.Post,buildJsonObject{put("messageIds",buildJsonArray{unread.forEach{add(it)}})})}}
+    val groupMediaPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->
+        if(uri!=null)vm.runTask{uploadFileFromUri(context,uri,"group-chats/$id/media","media",if(groupUploadQuickie)mapOf("viewOnce" to "true")else emptyMap());load()}
+    }
+    LaunchedEffect(id){if(g.str("status")=="ACCEPTED"){
+        runCatching{load()}
+        while(true){delay(4_000);runCatching{load()}}
+    }}
     LaunchedEffect(messages.size){if(messages.isNotEmpty())listState.scrollToItem(messages.lastIndex)}
     val groupTypingRevision = Presence.typingRevision.intValue
     var groupRemoteTyping by remember(id) { mutableStateOf(false) }
@@ -1109,7 +1160,7 @@ private val groupBubblePalette = listOf(
                                 }
                                 when{
                                     m.bool("viewOnce")->Text(if(mine)"Quickie 😈 sent" else "Quickie 😈 · View once",color=Color.White)
-                                    m.str("kind") in setOf("IMAGE","GIF")->AsyncImage(authenticatedImageModel(m.strOrNull("body")),"Group photo",Modifier.fillMaxWidth().height(220.dp),contentScale=ContentScale.Fit)
+                                    m.str("kind").uppercase() in setOf("IMAGE","GIF","VIDEO")->Row(Modifier.fillMaxWidth().clickable(enabled=!(m.bool("viewOnce")&&(mine||m.bool("opened")))){vm.runTask{openedGroupMedia=ApiClient.groupMedia(id,m.str("id"));openedGroupQuickie=m.bool("viewOnce");if(m.bool("viewOnce"))load()}},verticalAlignment=Alignment.CenterVertically){Icon(if(m.str("kind").uppercase()=="VIDEO")Icons.Default.PlayCircle else Icons.Default.Photo,null,tint=Color.White);Spacer(Modifier.width(8.dp));Text(when{m.bool("viewOnce")&&mine->"Quickie 😈 sent · One view";m.bool("viewOnce")&&m.bool("opened")->"Quickie 😈 already opened";m.bool("viewOnce")->"Quickie 😈 · Tap to view once";m.str("kind").uppercase()=="VIDEO"->"Tap to view video";else->"Tap to view photo"},color=Color.White)}
                                     else->SelectionContainer { Text(m.str("body"),color=Color.White) }
                                 }
                             }
@@ -1141,7 +1192,10 @@ private val groupBubblePalette = listOf(
                                 DropdownMenuItem(text={Text("Reply")},onClick={groupMenuOpen=null;replyingTo=m})
                             }
                             Text(chatMessageTimestamp(m.str("createdAt")), color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
-                            if(mine) Text("✓ Delivered", color=Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
+                            if(mine) {
+                                val reads=m.int("readCount");val delivered=m.int("deliveredCount");val recipients=m.int("recipientCount")
+                                Text(when{reads>0->"✓✓ Read $reads${if(recipients>0)"/$recipients" else ""}";delivered>0&&recipients>0->"✓ Delivered $delivered/$recipients";else->"✓ Sent"}, color=if(reads>0)Lavender else Muted, style=MaterialTheme.typography.labelSmall, modifier=Modifier.align(Alignment.End).padding(top=4.dp))
+                            }
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -1157,6 +1211,7 @@ private val groupBubblePalette = listOf(
                 }
             }
             Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically){
+                IconButton({groupAttachments=true}){Icon(Icons.Default.AddCircle,"Attachments",tint=Lavender)}
                 OutlinedTextField(text,{text=it},Modifier.weight(1f),placeholder={Text("Message")})
                 IconButton({
                     val body=text.trim()
@@ -1218,6 +1273,15 @@ private val groupBubblePalette = listOf(
     }
     if(confirmLeave)AlertDialog(onDismissRequest={if(!leaving)confirmLeave=false},title={Text("Leave group?")},text={Text("You will leave this group chat and stop receiving its messages.")},dismissButton={TextButton({confirmLeave=false},enabled=!leaving){Text("Cancel")}},confirmButton={TextButton({if(!leaving){leaving=true;vm.runTask{try{ApiClient.request("group-chats/$id/leave",HttpMethod.Post);confirmLeave=false;back()}finally{leaving=false}}}},enabled=!leaving){Text(if(leaving)"Leaving..." else "Leave group",color=Color(0xFFFF777E))}})
     openedGallery?.let{SharedGalleryViewer(it,vm){openedGallery=null}}
+    openedGroupMedia?.let{media->QuickieViewer(media,{openedGroupMedia=null},quickie=openedGroupQuickie)}
+    if(groupAttachments)AlertDialog(onDismissRequest={groupAttachments=false},title={Text("Share with group")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+        TextButton(onClick={groupAttachments=false;groupUploadQuickie=false;groupMediaPicker.launch("image/*")}){Icon(Icons.Default.PhotoLibrary,null);Text(" Send photo")}
+        TextButton(onClick={groupAttachments=false;groupUploadQuickie=false;groupMediaPicker.launch("video/*")}){Icon(Icons.Default.Videocam,null);Text(" Send video")}
+        TextButton(onClick={groupAttachments=false;groupUploadQuickie=true;groupMediaPicker.launch("image/*")}){Icon(Icons.Default.LocalFireDepartment,null);Text(" Send photo Quickie")}
+        TextButton(onClick={groupAttachments=false;groupUploadQuickie=true;groupMediaPicker.launch("video/*")}){Icon(Icons.Default.LocalFireDepartment,null);Text(" Send video Quickie")}
+        TextButton(onClick={groupAttachments=false;groupVaultPicker=true}){Icon(Icons.Default.Collections,null);Text(" Share a Vault")}
+    }},confirmButton={TextButton(onClick={groupAttachments=false}){Text("Cancel")}})
+    if(groupVaultPicker)PrivateGalleryPicker(vm,{groupVaultPicker=false}){gallery->groupVaultPicker=false;vm.runTask{ApiClient.request("group-chats/$id/share-gallery",HttpMethod.Post,obj("galleryId" to gallery.str("id")));load()}}
 }
 
 @Composable private fun GroupMemberEditor(

@@ -99,6 +99,28 @@ object ApiClient {
             }
         }
 
+    suspend fun groupMedia(groupId: String, messageId: String): Pair<ByteArray, String> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(BASE + "group-chats/$groupId/media/$messageId")
+                .get()
+                .header("X-AFTRHRS-Client", "AFTRHRS-Native-Android/1.0")
+                .header("Cache-Control", "no-store")
+                .build()
+            Network.http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val raw = response.body?.string().orEmpty()
+                    val message = runCatching {
+                        json.parseToJsonElement(raw).jsonObject["error"]?.jsonObject
+                            ?.get("message")?.jsonPrimitive?.contentOrNull
+                    }.getOrNull() ?: "This group media is unavailable."
+                    throw ApiException(message)
+                }
+                (response.body?.bytes() ?: error("Media unavailable")) to
+                    (response.header("Content-Type") ?: "image/webp")
+            }
+        }
+
     fun imageHeaders(): NetworkHeaders = NetworkHeaders.Builder().apply {
         Network.cookieHeader().takeIf { it.isNotBlank() }?.let { set("Cookie", it) }
         set("X-AFTRHRS-Client", "AFTRHRS-Native-Android/1.0")
