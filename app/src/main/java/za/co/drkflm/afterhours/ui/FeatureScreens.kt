@@ -89,6 +89,11 @@ private fun chatLink(body:String):String?=chatUrlPattern.find(body)?.value?.trim
 @Composable private fun Avatar(url:String?,modifier:Modifier=Modifier.size(62.dp)){AsyncImage(authenticatedImageModel(url),null,modifier.clip(CircleShape).background(Raised),contentScale=ContentScale.Crop)}
 
 private data class DiscoveryFilters(val online:Boolean=false,val minAge:String="18",val maxAge:String="99",val bodyType:String="",val minHeight:String="",val maxHeight:String="",val minWeight:String="",val maxWeight:String="",val relationshipStatus:String="",val race:String="",val bodyHair:String="",val religion:String="",val tribes:Set<String> = emptySet(),val circumcisionStatus:String="",val position:String="",val kinks:Set<String> = emptySet(),val lookingFor:String="",val interests:String="",val photo:String="all")
+private fun canonicalEthnicity(value:String):String=if(value.equals("European",ignoreCase=true))"Caucasian" else value
+private suspend fun fetchEthnicityOptions():List<String> = ApiClient.request("profile-options/ethnicity").jsonArray
+    .mapNotNull{it.jsonPrimitive.contentOrNull?.trim()?.takeIf(String::isNotEmpty)}
+    .map(::canonicalEthnicity)
+    .distinct()
 private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):String{val values=mutableListOf("radius" to radius.toString());if(advanced){if(filters.online)values+="online" to "true";listOf("minAge" to filters.minAge,"maxAge" to filters.maxAge,"bodyType" to filters.bodyType,"minHeight" to filters.minHeight,"maxHeight" to filters.maxHeight,"minWeight" to filters.minWeight,"maxWeight" to filters.maxWeight,"relationshipStatus" to filters.relationshipStatus,"race" to filters.race,"bodyHair" to filters.bodyHair,"religion" to filters.religion,"circumcisionStatus" to filters.circumcisionStatus,"position" to filters.position,"lookingFor" to filters.lookingFor,"interests" to filters.interests).filter{it.second.isNotBlank()}.forEach{values+=it};if(filters.tribes.isNotEmpty())values+="clanTribe" to filters.tribes.joinToString(",");if(filters.kinks.isNotEmpty())values+="kink" to filters.kinks.joinToString(",");if(filters.photo!="all")values+="photo" to filters.photo};return "discovery?"+values.joinToString("&"){(key,value)->"$key=${URLEncoder.encode(value,StandardCharsets.UTF_8.toString())}"}}
 
 @Composable fun DiscoverScreen(vm:AppViewModel) {
@@ -98,20 +103,65 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     var filters by remember { mutableStateOf(false) }
     var radius by remember { mutableFloatStateOf(25f) }
     var radiusMax by remember { mutableIntStateOf(25) }
+    var ethnicityOptions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var spotlight by remember { mutableStateOf<JsonObject?>(null) }
+    var spotlightBusy by remember { mutableStateOf(false) }
+    var spotlightUsed by remember { mutableIntStateOf(0) }
+    var spotlightLimit by remember { mutableIntStateOf(0) }
+    var spotlightRemaining by remember { mutableIntStateOf(0) }
+    var spotlightExhausted by remember { mutableStateOf(false) }
+    var spotlightError by remember { mutableStateOf<String?>(null) }
     var advanced by remember { mutableStateOf(false) }
     val serverEntitlements = vm.entitlements.value
     var criteria by remember { mutableStateOf(DiscoveryFilters()) }
+    suspend fun loadSpotlight() {
+        try {
+            val response = ApiClient.request("spotlight").jsonObject
+            spotlight = response.objectOrNull("item")
+            spotlightUsed = response.int("used")
+            spotlightLimit = response.int("limit")
+            spotlightRemaining = response.int("remaining")
+            spotlightExhausted = response.bool("exhausted")
+            spotlightError = null
+        } catch (error: Exception) { spotlightError = error.message ?: "Spotlight could not load" }
+    }
+    fun decideSpotlight(direction: String) {
+        val profile = spotlight ?: return
+        if (spotlightBusy || spotlightExhausted) return
+        vm.runTask {
+            spotlightBusy = true
+            try {
+                val result = ApiClient.request("spotlight/swipe", HttpMethod.Post, obj("memberId" to profile.str("id"), "direction" to direction)).jsonObject
+                spotlightUsed = result.int("used").takeIf { it > 0 } ?: (spotlightUsed + 1)
+                spotlightRemaining = result.int("remaining").takeIf { it >= 0 } ?: (spotlightLimit - spotlightUsed).coerceAtLeast(0)
+                loadSpotlight()
+            } catch (error: Exception) {
+                spotlightError = error.message ?: "Swipe could not be saved"
+                runCatching { loadSpotlight() }
+            } finally { spotlightBusy = false }
+        }
+    }
     fun load(targetRadius:Float=radius,targetCriteria:DiscoveryFilters=criteria) { vm.runTask { loading=true;try{items=ApiClient.request(discoveryPath(targetRadius.toInt(),targetCriteria,advanced)).jsonObject.array("items")}finally{loading=false} } }
     var savingRadius by remember { mutableStateOf(false) }
     suspend fun syncRadius() {
         if (savingRadius) return
         val config = ApiClient.request("discovery/filters").jsonObject
+        runCatching{fetchEthnicityOptions()}.getOrNull()?.let{options->ethnicityOptions=options}
+        if(criteria.race.isNotBlank() && ethnicityOptions.isNotEmpty() && criteria.race !in ethnicityOptions) criteria=criteria.copy(race="")
         advanced = serverEntitlements?.bool("advancedFilters") ?: config.bool("advanced")
         radiusMax = if (serverEntitlements?.bool("unlimitedDiscoveryRadius") == true) 20000 else 25
         val stored = config.objectOrNull("preferences")?.get("radiusKm")?.jsonPrimitive?.floatOrNull
         val synced = stored ?: if (advanced) 0f else 25f
-        radius = if (advanced && synced == 0f) 0f else synced.coerceIn(1f, radiusMax.toFloat())
+        radius = when {
+            advanced && synced == 0f -> 0f
+            !advanced && synced <= 0f -> radiusMax.toFloat()
+            else -> synced.coerceIn(1f, radiusMax.toFloat())
+        }
+        if (!advanced && stored != null && stored <= 0f) {
+            runCatching { ApiClient.request("preferences", HttpMethod.Patch, obj("radiusKm" to radiusMax)) }
+        }
         items = ApiClient.request(discoveryPath(radius.toInt(), criteria, advanced)).jsonObject.array("items")
+        loadSpotlight()
     }
     LaunchedEffect(vm.user.value?.str("subscription"), vm.entitlements.value) {
         vm.runTask { loading = true; try { syncRadius() } finally { loading = false } }
@@ -130,16 +180,89 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     LaunchedEffect(Unit) { while(true) { delay(30_000); if(!loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } } }
     selected?.let { ProfileScreen(vm,it.str("id")){selected=null}; return }
     Column(Modifier.fillMaxSize()) {
-        Header("The Grid","Nearby members") { IconButton({filters=true}){Icon(Icons.Default.Tune,"Filters")} }
         PullToRefreshBox(isRefreshing=loading,onRefresh={load()},modifier=Modifier.weight(1f)) {
-            LazyVerticalGridCompat(items) { profile -> ProfileTile(profile){selected=profile} }
+            LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=8.dp)) {
+                item {
+                SpotlightSection(
+                    profile=spotlight,
+                    used=spotlightUsed,
+                    limit=spotlightLimit,
+                    remaining=spotlightRemaining,
+                    exhausted=spotlightExhausted,
+                    busy=spotlightBusy,
+                    error=spotlightError,
+                    retry={ vm.runTask { loadSpotlight() } },
+                    swipe=::decideSpotlight,
+                    open={profile->selected=profile},
+                    modifier=Modifier.fillMaxWidth().height(250.dp).padding(horizontal=12.dp, vertical=4.dp)
+                )
+                }
+                item { Header("The Grid","Nearby members") { Row(verticalAlignment=Alignment.CenterVertically){IconButton({filters=true}){Icon(Icons.Default.Tune,"Filters")} } } }
+                items(items.chunked(2)) { row ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal=6.dp)) {
+                        row.forEach { profile -> Box(Modifier.weight(1f).padding(6.dp)){ProfileTile(profile.jsonObject){selected=profile.jsonObject}} }
+                        if(row.size==1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
         }
     }
-    if(filters) DiscoveryFilterSheet(radius,criteria,radiusMax,advanced,{filters=false}){newRadius,newCriteria->val chosen=if(advanced&&newRadius==0f)0f else newRadius.coerceIn(1f,if(advanced)20000f else 25f);criteria=newCriteria;filters=false;vm.runTask{savingRadius=true;try{ApiClient.request("preferences",HttpMethod.Patch,obj("radiusKm" to chosen.toInt()));radius=chosen;items=ApiClient.request(discoveryPath(chosen.toInt(),newCriteria,advanced)).jsonObject.array("items")}finally{savingRadius=false}}}
+    if(filters) DiscoveryFilterSheet(radius,criteria,radiusMax,advanced,ethnicityOptions,{filters=false}){newRadius,newCriteria->val chosen=if(advanced&&newRadius==0f)0f else newRadius.coerceIn(1f,if(advanced)20000f else 25f);criteria=newCriteria;filters=false;vm.runTask{savingRadius=true;try{ApiClient.request("preferences",HttpMethod.Patch,obj("radiusKm" to chosen.toInt()));radius=chosen;items=ApiClient.request(discoveryPath(chosen.toInt(),newCriteria,advanced)).jsonObject.array("items")}finally{savingRadius=false}}}
 }
 @Composable private fun DiscoveryNumberField(label:String,value:String,range:IntRange,change:(String)->Unit){OutlinedTextField(value,{raw->val digits=raw.filter(Char::isDigit);change(if(digits.isBlank())""else digits.toIntOrNull()?.coerceIn(range.first,range.last)?.toString().orEmpty())},label={Text(label)},placeholder={Text("Any")},modifier=Modifier.fillMaxWidth())}
-@Composable private fun DiscoveryFilterSheet(initialRadius:Float,initial:DiscoveryFilters,radiusMax:Int,advanced:Boolean,dismiss:()->Unit,apply:(Float,DiscoveryFilters)->Unit){var radius by remember{mutableFloatStateOf(initialRadius)};var f by remember{mutableStateOf(initial)};val races=listOf("Black","Coloured","Indian / South Asian","White","Asian","Mixed","Other");val bodies=listOf("Toned","Average","Large","Muscular","Slim","Stocky");val relationships=listOf("Committed","Dating","Engaged","Exclusive","Married","Open Relationship","Partnered","Single");val tribes=listOf("Bear","Clean Cut","Daddy","Discreet","Geek","Interracial","Jock","Leather","Otter","Poz","Rugged","Trans","Twink","Sober");val hair=listOf("Smooth","Some","Hairy","Very hairy");val religions=listOf("African traditional spirituality","Christianity","Islam","Hinduism","Judaism","Buddhism","Agnostic","Atheist","Spiritual","Other");val positions=listOf("Top","Top / Vers","Vers","Bottom / Vers","Bottom","Side");val kinks=listOf("Group","Couples","One on One","Oral Only","Threesomes","Public","BDSM","Slave/Master","Toy Fun");ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=790.dp).verticalScroll(rememberScrollState()).padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){Text("Find your vibe",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);EditorSection("Distance"){if(advanced)PrivacyToggle("Unlimited distance",radius==0f){radius=if(it)0f else radiusMax.toFloat()};Text(if(advanced&&radius==0f)"Show members at any distance"else"Within ${radius.toInt()} km",color=Lavender);if(radius!=0f)Slider(radius,{radius=it},valueRange=1f..radiusMax.toFloat(),steps=(radiusMax-2).coerceAtLeast(0));if(!advanced)Text("Free members are limited to 25 km.",color=Muted,style=MaterialTheme.typography.bodySmall)};EditorSection(if(advanced)"Profile filters"else"Profile filters · Premium"){Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(9.dp)){PrivacyToggle("Online members only",f.online,advanced){f=f.copy(online=it)};DiscoveryNumberField("Minimum age",f.minAge,18..99){f=f.copy(minAge=it)};DiscoveryNumberField("Maximum age",f.maxAge,18..99){f=f.copy(maxAge=it)};SelectField("Body type",f.bodyType,listOf("")+bodies,{if(it.isBlank())"Any body type"else it}){f=f.copy(bodyType=it)};DiscoveryNumberField("Minimum height (cm)",f.minHeight,100..250){f=f.copy(minHeight=it)};DiscoveryNumberField("Maximum height (cm)",f.maxHeight,100..250){f=f.copy(maxHeight=it)};DiscoveryNumberField("Minimum weight (kg)",f.minWeight,30..300){f=f.copy(minWeight=it)};DiscoveryNumberField("Maximum weight (kg)",f.maxWeight,30..300){f=f.copy(maxWeight=it)};SelectField("Relationship",f.relationshipStatus,listOf("")+relationships,{if(it.isBlank())"Any relationship"else it}){f=f.copy(relationshipStatus=it)};SelectField("Race",f.race,listOf("")+races,{if(it.isBlank())"Any race"else it}){f=f.copy(race=it)};SelectField("Body hair",f.bodyHair,listOf("")+hair,{if(it.isBlank())"Any body hair"else it}){f=f.copy(bodyHair=it)};SelectField("Religion",f.religion,listOf("")+religions,{if(it.isBlank())"Any religion"else it}){f=f.copy(religion=it)};MultiChoiceField("Tribes · any match",tribes,f.tribes,tribes.size){f=f.copy(tribes=if(it in f.tribes)f.tribes-it else f.tribes+it)};SelectField("Cut / Uncut",f.circumcisionStatus,listOf("","Cut","Uncut"),{if(it.isBlank())"Any"else it}){f=f.copy(circumcisionStatus=it)};SelectField("Position",f.position,listOf("")+positions,{if(it.isBlank())"Any position"else it}){f=f.copy(position=it)};MultiChoiceField("Kinks · any match",kinks,f.kinks,3){f=f.copy(kinks=if(it in f.kinks)f.kinks-it else f.kinks+it)};OutlinedTextField(f.lookingFor,{f=f.copy(lookingFor=it)},label={Text("Looking for · comma separated")},modifier=Modifier.fillMaxWidth());OutlinedTextField(f.interests,{f=f.copy(interests=it)},label={Text("Interests · comma separated")},modifier=Modifier.fillMaxWidth());SelectField("Profile picture",f.photo,listOf("all","with","without"),{when(it){"with"->"With a picture";"without"->"Without a picture";else->"All profiles"}}){f=f.copy(photo=it)}};if(!advanced)Text("Upgrade to Premium to use profile and online filters.",color=Muted,style=MaterialTheme.typography.bodySmall)};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton({f=DiscoveryFilters();radius=if(advanced)0f else 25f},Modifier.weight(1f)){Text("Clear all")};ElectricButton({apply(radius,f)},Modifier.weight(1f)){Text("Apply")}};Spacer(Modifier.height(28.dp))}}}
-@Composable private fun LazyVerticalGridCompat(items:JsonArray,item:@Composable (JsonObject) -> Unit){LazyColumn(contentPadding=PaddingValues(horizontal=12.dp,vertical=4.dp)){items(items.chunked(2)){row->Row(Modifier.fillMaxWidth()){row.forEach{Box(Modifier.weight(1f).padding(6.dp)){item(it.jsonObject)}};if(row.size==1)Spacer(Modifier.weight(1f))}}}}
+@Composable private fun DiscoveryFilterSheet(initialRadius:Float,initial:DiscoveryFilters,radiusMax:Int,advanced:Boolean,ethnicityOptions:List<String>,dismiss:()->Unit,apply:(Float,DiscoveryFilters)->Unit){var radius by remember{mutableFloatStateOf(initialRadius)};var f by remember{mutableStateOf(initial)};val races=ethnicityOptions;val bodies=listOf("Toned","Average","Large","Muscular","Slim","Stocky");val relationships=listOf("Committed","Dating","Engaged","Exclusive","Married","Open Relationship","Partnered","Single");val tribes=listOf("Bear","Clean Cut","Daddy","Discreet","Geek","Interracial","Jock","Leather","Otter","Poz","Rugged","Trans","Twink","Sober");val hair=listOf("Smooth","Some","Hairy","Very hairy");val religions=listOf("African traditional spirituality","Christianity","Islam","Hinduism","Judaism","Buddhism","Agnostic","Atheist","Spiritual","Other");val positions=listOf("Top","Top / Vers","Vers","Bottom / Vers","Bottom","Side");val kinks=listOf("Group","Couples","One on One","Oral Only","Threesomes","Public","BDSM","Slave/Master","Toy Fun");ModalBottomSheet(onDismissRequest=dismiss,containerColor=Panel){Column(Modifier.fillMaxWidth().heightIn(max=790.dp).verticalScroll(rememberScrollState()).padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){Text("Find your vibe",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);EditorSection("Distance"){if(advanced)PrivacyToggle("Unlimited distance",radius==0f){radius=if(it)0f else radiusMax.toFloat()};Text(if(advanced&&radius==0f)"Show members at any distance"else"Within ${radius.toInt()} km",color=Lavender);if(radius!=0f)Slider(radius,{radius=it},valueRange=1f..radiusMax.toFloat(),steps=(radiusMax-2).coerceAtLeast(0));if(!advanced)Text("Free members are limited to 25 km.",color=Muted,style=MaterialTheme.typography.bodySmall)};EditorSection(if(advanced)"Profile filters"else"Profile filters · Premium"){Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(9.dp)){PrivacyToggle("Online members only",f.online,advanced){f=f.copy(online=it)};DiscoveryNumberField("Minimum age",f.minAge,18..99){f=f.copy(minAge=it)};DiscoveryNumberField("Maximum age",f.maxAge,18..99){f=f.copy(maxAge=it)};SelectField("Body type",f.bodyType,listOf("")+bodies,{if(it.isBlank())"Any body type"else it}){f=f.copy(bodyType=it)};DiscoveryNumberField("Minimum height (cm)",f.minHeight,100..250){f=f.copy(minHeight=it)};DiscoveryNumberField("Maximum height (cm)",f.maxHeight,100..250){f=f.copy(maxHeight=it)};DiscoveryNumberField("Minimum weight (kg)",f.minWeight,30..300){f=f.copy(minWeight=it)};DiscoveryNumberField("Maximum weight (kg)",f.maxWeight,30..300){f=f.copy(maxWeight=it)};SelectField("Relationship",f.relationshipStatus,listOf("")+relationships,{if(it.isBlank())"Any relationship"else it}){f=f.copy(relationshipStatus=it)};SelectField("Ethnicity",f.race,listOf("")+races,{if(it.isBlank())"Any ethnicity"else it}){f=f.copy(race=it)};SelectField("Body hair",f.bodyHair,listOf("")+hair,{if(it.isBlank())"Any body hair"else it}){f=f.copy(bodyHair=it)};SelectField("Religion",f.religion,listOf("")+religions,{if(it.isBlank())"Any religion"else it}){f=f.copy(religion=it)};MultiChoiceField("Tribes · any match",tribes,f.tribes,tribes.size){f=f.copy(tribes=if(it in f.tribes)f.tribes-it else f.tribes+it)};SelectField("Cut / Uncut",f.circumcisionStatus,listOf("","Cut","Uncut"),{if(it.isBlank())"Any"else it}){f=f.copy(circumcisionStatus=it)};SelectField("Position",f.position,listOf("")+positions,{if(it.isBlank())"Any position"else it}){f=f.copy(position=it)};MultiChoiceField("Kinks · any match",kinks,f.kinks,3){f=f.copy(kinks=if(it in f.kinks)f.kinks-it else f.kinks+it)};OutlinedTextField(f.lookingFor,{f=f.copy(lookingFor=it)},label={Text("Looking for · comma separated")},modifier=Modifier.fillMaxWidth());OutlinedTextField(f.interests,{f=f.copy(interests=it)},label={Text("Interests · comma separated")},modifier=Modifier.fillMaxWidth());SelectField("Profile picture",f.photo,listOf("all","with","without"),{when(it){"with"->"With a picture";"without"->"Without a picture";else->"All profiles"}}){f=f.copy(photo=it)}};if(!advanced)Text("Upgrade to Premium to use profile and online filters.",color=Muted,style=MaterialTheme.typography.bodySmall)};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton({f=DiscoveryFilters();radius=if(advanced)0f else 25f},Modifier.weight(1f)){Text("Clear all")};ElectricButton({apply(radius,f)},Modifier.weight(1f)){Text("Apply")}};Spacer(Modifier.height(28.dp))}}}
+@Composable private fun LazyVerticalGridCompat(items:JsonArray,modifier:Modifier=Modifier,item:@Composable (JsonObject) -> Unit){LazyColumn(modifier=modifier,contentPadding=PaddingValues(horizontal=12.dp,vertical=4.dp)){items(items.chunked(2)){row->Row(Modifier.fillMaxWidth()){row.forEach{Box(Modifier.weight(1f).padding(6.dp)){item(it.jsonObject)}};if(row.size==1)Spacer(Modifier.weight(1f))}}}}
+@Composable private fun SpotlightSection(
+    profile:JsonObject?,used:Int,limit:Int,remaining:Int,exhausted:Boolean,busy:Boolean,error:String?,
+    retry:()->Unit,swipe:(String)->Unit,open:(JsonObject)->Unit,modifier:Modifier=Modifier
+) {
+    var drag by remember(profile?.str("id")){ mutableFloatStateOf(0f) }
+    val shape=RoundedCornerShape(24.dp)
+    Box(modifier.clip(shape).pointerInput(profile?.str("id"),busy){if(profile!=null&&!busy)detectHorizontalDragGestures(onHorizontalDrag={change,amount->change.consume();drag+=amount},onDragEnd={if(drag>48)swipe("RIGHT") else if(drag< -48)swipe("LEFT");drag=0f},onDragCancel={drag=0f})}.background(Brush.linearGradient(listOf(Color(0xFF8B22FF),Color(0xFFFF1744),Color(0xFF32104F))))
+        .border(1.dp,Color.White.copy(alpha=.26f),shape).shadow(12.dp,shape),contentAlignment=Alignment.Center) {
+        Box(Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha=.34f)).padding(horizontal=11.dp,vertical=6.dp)) {
+            Text("✦  SPOTLIGHT",color=Color.White,fontWeight=FontWeight.Black,style=MaterialTheme.typography.labelLarge)
+        }
+        when {
+            busy && profile==null -> CircularProgressIndicator(color=Color.White,modifier=Modifier.size(28.dp),strokeWidth=2.dp)
+            profile!=null -> {
+                AsyncImage(authenticatedImageModel(profile.strOrNull("photo")),null,Modifier.fillMaxSize().clickable{open(profile)},contentScale=ContentScale.Crop)
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha=.06f),.25f to Color.Transparent,.55f to Color.Black.copy(alpha=.15f),1f to Color.Black.copy(alpha=.88f))))
+                Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start=16.dp,end=16.dp,bottom=13.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Text("${profile.str("displayName")}${profile["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",color=Color.White,fontWeight=FontWeight.ExtraBold,style=MaterialTheme.typography.titleLarge,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        if(profile.bool("verified")) Icon(Icons.Default.Verified,"Verified",tint=Color(0xFF78E8FF),modifier=Modifier.size(18.dp))
+                    }
+                    val position=profile.strOrNull("position").visibleProfileValue()?.takeUnless{it=="Prefer not to say"}
+                    val status=profile.strOrNull("circumcisionStatus").visibleProfileValue()?.takeIf{it in setOf("Cut","Uncut")}
+                    val interests=profile.array("interests").mapNotNull{it.jsonPrimitive.contentOrNull}.take(3)
+                    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        position?.let{GridChip(it,positionGlyph(it))};status?.let{GridChip(it,if(it=="Cut")"✂" else "○")};interests.forEach{GridChip(it,"♥")}
+                    }
+                }
+                Row(Modifier.align(Alignment.TopEnd).padding(10.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha=.38f)).padding(horizontal=9.dp,vertical=5.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                    Text("$remaining",color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelMedium)
+                    Text("/ $limit left",color=Color.White.copy(alpha=.85f),style=MaterialTheme.typography.labelSmall)
+                }
+                Row(Modifier.align(Alignment.CenterEnd).padding(end=9.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    SpotlightAction("✕",Color(0xFFFF4365),busy){swipe("LEFT")}
+                    SpotlightAction("♥",Color(0xFFFF45A2),busy){swipe("RIGHT")}
+                }
+            }
+            else -> Column(Modifier.align(Alignment.Center).padding(horizontal=18.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                Text(if(exhausted)"You’re all caught up" else "No Spotlight profiles right now",color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium)
+                Text(error ?: if(limit>0)"$used of $limit daily swipes used" else "We’ll find someone new for you soon.",color=Color.White.copy(alpha=.9f),style=MaterialTheme.typography.bodySmall)
+                if(error!=null)TextButton(retry){Text("Try again",color=Color.White)}
+            }
+        }
+        if(profile!=null) Text("Swipe to decide",color=Color.White.copy(alpha=.8f),style=MaterialTheme.typography.labelSmall,modifier=Modifier.align(Alignment.TopCenter).padding(top=47.dp))
+    }
+}
+@Composable private fun SpotlightAction(label:String,color:Color,enabled:Boolean,onClick:()->Unit) {
+    Box(Modifier.size(42.dp).clip(CircleShape).background(Color.Black.copy(alpha=.55f)).border(1.dp,color,CircleShape).clickable(enabled=enabled,onClick=onClick),contentAlignment=Alignment.Center) {
+        Text(label,color=color,fontWeight=FontWeight.Black,style=MaterialTheme.typography.titleLarge)
+    }
+}
 private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Vers"->"↗";"Vers"->"↕";"Bottom / Vers"->"↘";"Bottom"->"↓";"Side"->"↔";else->""}
 @Composable private fun GridChip(text:String,symbol:String?=null){Row(Modifier.border(1.dp,Electric.copy(alpha=.8f),RoundedCornerShape(50)).background(Electric.copy(alpha=.13f),RoundedCornerShape(50)).padding(horizontal=7.dp,vertical=3.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){symbol?.takeIf{it.isNotBlank()}?.let{Text(it,color=Lavender,style=MaterialTheme.typography.labelSmall)};Text(text,color=Lavender,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold,maxLines=1)}}
 @Composable private fun ProfileTile(p:JsonObject,open:()->Unit){
@@ -179,6 +302,7 @@ private fun publicProfileText(value:String?):String? = value.visibleProfileValue
 }
 private fun JsonObject.publicList(key:String):String? = array(key).mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.let(::publicProfileText) }.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 private fun JsonObject.publicString(key:String):String? = publicProfileText(strOrNull(key))
+private fun ethnicityDisplay(value:String?):String?=value?.let(::canonicalEthnicity)?.let(::publicProfileText)
 
 @Composable fun ProfileScreen(vm:AppViewModel,id:String,back:()->Unit){
     BackHandler(onBack=back)
@@ -242,7 +366,7 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
                     "Relationship" to profile.publicString("relationshipStatus"),
                     "Catch me at" to profile.publicString("catchMeAt"),
                     "Explicit pictures" to profile.publicString("acceptExplicitPics"),
-                    "Race" to profile.publicString("race"),
+                    "Ethnicity" to ethnicityDisplay(profile.strOrNull("race")),
                     "Body hair" to profile.publicString("bodyHair"),
                     "Religion" to profile.publicString("religion"),
                     "Tribes" to profile.publicString("clanTribe"),
@@ -318,7 +442,7 @@ private fun JsonObject.publicString(key:String):String? = publicProfileText(strO
 @Composable fun LikesScreen(vm:AppViewModel){var tab by remember{mutableIntStateOf(0)};var items by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))};var selected by remember{mutableStateOf<String?>(null)};suspend fun load(){val data=ApiClient.request(when(tab){0->"likes/received";1->"likes";else->"likes/matches"});items=if(data is JsonArray)data else data.jsonObject.array("items")};LaunchedEffect(tab){vm.runTask{load()}};selected?.let{ProfileScreen(vm,it){selected=null};return};Column{Header("Likes","Connections waiting in the wings");TabRow(tab){Tab(tab==0,{tab=0},text={Text("Liked you")});Tab(tab==1,{tab=1},text={Text("You liked")});Tab(tab==2,{tab=2},text={Text("Matches")})};LazyColumn{if(items.isEmpty())item{Text("No likes here yet.",color=Muted,modifier=Modifier.padding(24.dp))};items(items.size){i->val p=items[i].jsonObject;val detail=p.strOrNull("bio").visibleProfileValue()?:p.strOrNull("city").visibleProfileValue();ListItem(headlineContent={Text(p.str("displayName"),fontWeight=FontWeight.Bold)},supportingContent=detail?.let{{Text(it,maxLines=2)}},leadingContent={Avatar(p.strOrNull("photo"))},modifier=Modifier.clickable{selected=p.str("id")})}}}
 }
 
-private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQUESTED")return "Message request";val m=c["lastMessage"]?.jsonObject?:return "Start chatting";val body=m.str("body");if(body.startsWith("GALLERY_SHARE:"))return "Vault shared";if(body.startsWith("LOCATION:"))return "📍 Shared location";return when(m.str("kind").uppercase()){ "IMAGE","GIF"->"Image received";"VIDEO"->"Video received";"GALLERY"->"Vault shared";else->body } }
+private fun conversationPreview(c:JsonObject):String { val m=c["lastMessage"]?.jsonObject; if(c.str("status")=="REQUESTED")return when { m==null->"Message request";m.bool("viewOnce")->"Quickie 😈 in message request";m.str("body").startsWith("GALLERY_SHARE:")->"Vault shared in message request";m.str("body").startsWith("LOCATION:")->"Location shared in message request";m.str("kind").uppercase() in setOf("IMAGE","GIF")->"Photo in message request";m.str("kind").uppercase()=="VIDEO"->"Video in message request";else->"Message request: ${m.str("body").take(72)}" };if(m==null)return "Start chatting";val body=m.str("body");if(body.startsWith("GALLERY_SHARE:"))return "Vault shared";if(body.startsWith("LOCATION:"))return "📍 Shared location";return when(m.str("kind").uppercase()){ "IMAGE","GIF"->"Image received";"VIDEO"->"Video received";"GALLERY"->"Vault shared";else->body } }
 @Composable fun InboxScreen(vm:AppViewModel, chatsReselect:Int=0){
     var tab by remember{mutableIntStateOf(0)}
     var items by remember{mutableStateOf<JsonArray>(JsonArray(emptyList()))}
@@ -348,7 +472,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
         TabRow(tab){Tab(tab==0,{tab=0},text={Text("Direct")});Tab(tab==1,{tab=1},text={Text("Groups")})}
         LazyColumn(Modifier.fillMaxSize()){
             if(items.isEmpty())item{Box(Modifier.fillParentMaxSize().padding(36.dp),contentAlignment=Alignment.Center){Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){Icon(if(tab==0)Icons.Default.ChatBubbleOutline else Icons.Default.Groups,null,tint=Muted,modifier=Modifier.size(72.dp));Text(if(tab==0)"No messages yet"else"No group chats",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Text(if(tab==0)"Start a conversation from a member profile."else"Create a group with two or more mutual matches.",color=Muted,textAlign=androidx.compose.ui.text.style.TextAlign.Center);if(tab==1)ElectricButton({newGroup=true}){Icon(Icons.Default.GroupAdd,null);Text(" Create group")}}}}
-            items(items.size){i->val c=items[i].jsonObject;val other=c["other"]?.jsonObject;ListItem(headlineContent={Text(if(tab==0)other?.str("displayName").orEmpty()else c.str("title"),fontWeight=FontWeight.Bold,color=Color.White)},supportingContent={if(tab==0)Column{Text(conversationPreview(c),maxLines=1,color=Muted);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(7.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.labelSmall)}}else Text(c.array("members").joinToString(", "){it.jsonObject.str("name")}.ifBlank{"${c.int("pendingCount")} pending"},maxLines=1,color=Muted)},leadingContent={if(tab==0)Avatar(other?.strOrNull("photo"))else if(!c.strOrNull("photoUrl").isNullOrBlank())Avatar(c.strOrNull("photoUrl"),Modifier.size(52.dp))else Box(Modifier.size(52.dp).background(Electric.copy(alpha=.18f),CircleShape),contentAlignment=Alignment.Center){Icon(Icons.Default.Groups,null,tint=Lavender)}},trailingContent={if(c.int("unreadCount")>0)Badge{Text(c.int("unreadCount").toString())}},colors=ListItemDefaults.colors(containerColor=Color.Transparent),modifier=Modifier.combinedClickable(onClick={chat=c},onLongClick={deleteScope="me";deleteTarget=c}));if(i<items.lastIndex)HorizontalDivider(modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp),thickness=0.7.dp,color=Electric.copy(alpha=0.24f))}
+            items(items.size){i->val c=items[i].jsonObject;val other=c["other"]?.jsonObject;val streak=c.objectOrNull("chatStreak");val streakStatus=streak?.strOrNull("status");ListItem(headlineContent={Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){Text(if(tab==0)other?.str("displayName").orEmpty()else c.str("title"),fontWeight=FontWeight.Bold,color=Color.White,maxLines=1,overflow=TextOverflow.Ellipsis);if(tab==0&&c.str("status")!="REQUESTED"&&streakStatus=="active")Text("🔥 ${streak?.int("days")?:0}",modifier=Modifier.background(Color(0x33FF8A4D),RoundedCornerShape(50)).border(1.dp,Color(0x66FF8A4D),RoundedCornerShape(50)).padding(horizontal=7.dp,vertical=3.dp),color=Color(0xFFFFD0A1),style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)}},supportingContent={if(tab==0)Column{Text(conversationPreview(c),maxLines=1,color=Muted);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(7.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.labelSmall)}}else Text(c.array("members").joinToString(", "){it.jsonObject.str("name")}.ifBlank{"${c.int("pendingCount")} pending"},maxLines=1,color=Muted)},leadingContent={if(tab==0)Avatar(other?.strOrNull("photo"))else if(!c.strOrNull("photoUrl").isNullOrBlank())Avatar(c.strOrNull("photoUrl"),Modifier.size(52.dp))else Box(Modifier.size(52.dp).background(Electric.copy(alpha=.18f),CircleShape),contentAlignment=Alignment.Center){Icon(Icons.Default.Groups,null,tint=Lavender)}},trailingContent={if(c.int("unreadCount")>0)Badge{Text(c.int("unreadCount").toString())}},colors=ListItemDefaults.colors(containerColor=Color.Transparent),modifier=Modifier.combinedClickable(onClick={chat=c},onLongClick={deleteScope="me";deleteTarget=c}));if(i<items.lastIndex)HorizontalDivider(modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp),thickness=0.7.dp,color=Electric.copy(alpha=0.24f))}
         }
     }
     deleteTarget?.let{target->
@@ -416,6 +540,7 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var other by remember(c.str("id")) { mutableStateOf(c.objectOrNull("other")) }
     var requestStatus by remember(id){mutableStateOf(c.str("status"))}
     var requesterId by remember(id){mutableStateOf(c.str("requestedById"))}
+    var chatStreak by remember(id){mutableStateOf(c.objectOrNull("chatStreak"))}
     var responding by remember(id){mutableStateOf(false)}
     val isIncomingRequest=requestStatus=="REQUESTED" && requesterId!=vm.user.value?.str("id")
     var safety by remember(id){mutableStateOf(false)}
@@ -425,12 +550,13 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
     var reportDetails by remember(id){mutableStateOf("")}
     suspend fun refreshRequest(){
         val current=ApiClient.request("conversations").jsonArray.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject
-        if(current!=null){requestStatus=current.str("status");requesterId=current.str("requestedById")}
+        if(current!=null){requestStatus=current.str("status");requesterId=current.str("requestedById");chatStreak=current.objectOrNull("chatStreak")}
     }
 
     val chatRevision = Presence.revision.intValue
     LaunchedEffect(id,chatRevision) { if(chatRevision>0) runCatching { other=ApiClient.request("conversations").jsonArray.firstOrNull { it.jsonObject.str("id")==id }?.jsonObject?.objectOrNull("other") ?: other } }
     LaunchedEffect(id) { while(true) { delay(30_000); runCatching { other=ApiClient.request("conversations").jsonArray.firstOrNull { it.jsonObject.str("id")==id }?.jsonObject?.objectOrNull("other") ?: other } } }
+    LaunchedEffect(id, Presence.revision.intValue) { runCatching { val current=ApiClient.request("conversations").jsonArray.firstOrNull{it.jsonObject.str("id")==id}?.jsonObject;if(current!=null)chatStreak=current.objectOrNull("chatStreak") } }
     val typingEventRevision=Presence.typingRevision.intValue
     var remoteTyping by remember(id){mutableStateOf(false)}
     var typingDots by remember(id){mutableIntStateOf(1)}
@@ -557,6 +683,14 @@ private fun conversationPreview(c:JsonObject):String { if(c.str("status")=="REQU
             Avatar(other?.strOrNull("photo"),Modifier.size(46.dp).clickable { viewedProfile=other?.strOrNull("userId")?:other?.strOrNull("id") })
             Spacer(Modifier.width(12.dp))
             Column{Text(other?.str("displayName")?:"Chat",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);other?.strOrNull("distance").visibleProfileValue()?.let{Text(it,color=Lavender,style=MaterialTheme.typography.bodySmall)};Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){Box(Modifier.size(8.dp).background(if(other?.bool("online")==true)Color(0xFF43D17A)else Color.Gray,CircleShape));Text(if(other?.bool("online")==true)"Online"else"Offline",color=Muted,style=MaterialTheme.typography.bodySmall)}}
+        }
+        val streakStatus=chatStreak?.strOrNull("status")
+        if(requestStatus!="REQUESTED"&&(streakStatus=="active"||streakStatus=="approaching")){
+            val approaching=streakStatus=="approaching"
+            Row(Modifier.fillMaxWidth().padding(horizontal=14.dp, vertical=4.dp).background(if(approaching)Color(0x332E2817)else Color(0x332E201B),RoundedCornerShape(12.dp)).border(1.dp,if(approaching)Color(0x66FFCC6B)else Color(0x66FF9954),RoundedCornerShape(12.dp)).padding(horizontal=14.dp,vertical=11.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                Text("🔥",fontSize=20.sp)
+                Text(if(approaching)"You and ${other?.str("displayName")?:"them"} are one day away from a chat streak! Keep it up" else "You and ${other?.str("displayName")?:"them"} are on a ${chatStreak?.int("days")?:0} day Streak! Keep it up",color=if(approaching)Color(0xFFFFE8B3)else Color(0xFFFFE2C2),style=MaterialTheme.typography.bodySmall,fontWeight=FontWeight.SemiBold)
+            }
         }
         if(isIncomingRequest){
             Column(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=8.dp).background(Raised,RoundedCornerShape(14.dp)).padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
@@ -1594,69 +1728,6 @@ private data class LauncherIconChoice(val id:String,val title:String,val compone
 }
 
 @Composable private fun BlockedMembersManager(vm:AppViewModel){
-    var members by remember { mutableStateOf<List<JsonObject>?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var pending by remember { mutableStateOf<JsonObject?>(null) }
-    var busyId by remember { mutableStateOf<String?>(null) }
-    fun refresh(){
-        members=null
-        vm.runTask {
-            try {
-                members=ApiClient.request("blocks").jsonArray.map { it.jsonObject }
-                error=null
-            } catch(e:Exception) {
-                error=e.localizedMessage?:"Could not load blocked members."
-            }
-        }
-    }
-    LaunchedEffect(Unit){refresh()}
-    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
-        Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.PersonOff,null,tint=Lavender);Spacer(Modifier.width(8.dp));Text("Blocked members",color=Lavender,fontWeight=FontWeight.Bold);Spacer(Modifier.weight(1f));TextButton(onClick={refresh()}){Text("Refresh")}}
-        Text("Unblocking may make you visible to each other again. Deleted chats and likes won't be restored.",color=Muted,style=MaterialTheme.typography.bodySmall)
-        if(members==null && error==null) CircularProgressIndicator(Modifier.size(24.dp),color=Lavender)
-        if(error!=null){
-            Text(error!!,color=Color(0xFFFFB4AB))
-            TextButton(onClick={refresh()}){Text("Try again")}
-        }
-        if(members?.isEmpty()==true) Text("You haven't blocked anyone.",color=Muted)
-        members?.forEach { member ->
-            val id=member.str("id")
-            Row(Modifier.fillMaxWidth().padding(vertical=5.dp),verticalAlignment=Alignment.CenterVertically){
-                Text(member.str("name"),color=Color.White,modifier=Modifier.weight(1f))
-                OutlinedButton(onClick={pending=member},enabled=busyId==null){Text("Unblock")}
-            }
-        }
-    }
-    if(pending!=null){
-        val member=pending!!
-        AlertDialog(
-            onDismissRequest={if(busyId==null)pending=null},
-            title={Text("Unblock ${member.str("name")}?")},
-            text={Text("You may see each other in discovery again. Previous likes and conversations won't be restored.")},
-            confirmButton={
-                TextButton(onClick={
-                    val id=member.str("id")
-                    busyId=id
-                    vm.runTask {
-                        try {
-                            val response=ApiClient.request("blocks/$id",HttpMethod.Delete).jsonObject
-                            if(response.bool("blocked")) throw IllegalStateException("The server did not confirm unblocking.")
-                            members=members?.filterNot { it.str("id")==id }
-                            pending=null
-                            error=null
-                        } catch(e:Exception) {
-                            pending=null
-                            error=e.localizedMessage?:"Could not unblock member."
-                        } finally {busyId=null}
-                    }
-                },enabled=busyId==null){Text("Unblock")}
-            },
-            dismissButton={TextButton(onClick={pending=null},enabled=busyId==null){Text("Keep blocked")}}
-        )
-    }
-}
-
-@Composable private fun BlockedMembersManager(vm:AppViewModel){
     var expanded by remember { mutableStateOf(false) }
     var members by remember { mutableStateOf<List<JsonObject>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -1740,10 +1811,11 @@ private val defaultProfileAvatars = listOf(
     var photoBusy by remember{mutableStateOf(false)}
     var showAvatarPicker by remember{mutableStateOf(false)}
     var name by remember{mutableStateOf(profile?.str("displayName").orEmpty())};var bio by remember{mutableStateOf(profile?.str("bio").orEmpty())};var gender by remember{mutableStateOf(profile?.strOrNull("gender")?:"Not specified")};var identity by remember{mutableStateOf(profile?.strOrNull("identity").orEmpty())};var pronouns by remember{mutableStateOf(profile?.strOrNull("pronouns")?:"Prefer not to say")};var position by remember{mutableStateOf(profile?.strOrNull("position")?:"Prefer not to say")};var cut by remember{mutableStateOf(profile?.strOrNull("circumcisionStatus")?:"Do not show")};var bodyType by remember{mutableStateOf(profile?.strOrNull("bodyType")?:"Do not show")};var relationship by remember{mutableStateOf(profile?.strOrNull("relationshipStatus")?:"Do not show")};var catchMeAt by remember{mutableStateOf(profile?.strOrNull("catchMeAt").orEmpty())};var explicitPics by remember{mutableStateOf(profile?.strOrNull("acceptExplicitPics")?:"Never")}
-    val ethnicityOptions=listOf("Prefer not to say","African","Arab / Middle Eastern","East Asian","European","Indigenous","Latino / Hispanic","South Asian","Southeast Asian","Mixed or multiple ethnicities","Another ethnicity")
+    var ethnicityOptions by remember { mutableStateOf<List<String>>(emptyList()) }
     val bodyHairOptions=listOf("Prefer not to say","No visible body hair","Some body hair","Moderate body hair","A lot of body hair")
     val religionOptions=listOf("Prefer not to say","African traditional religions","Buddhism","Christianity","Hinduism","Islam","Judaism","Sikhism","Other religion","Spiritual, not religious","Agnostic","Atheist","No religion")
-    var race by remember{mutableStateOf(profile?.strOrNull("race").orEmpty().takeIf{it in ethnicityOptions}?:"Prefer not to say")};var bodyHair by remember{mutableStateOf(profile?.strOrNull("bodyHair").orEmpty().takeIf{it in bodyHairOptions}?:"Prefer not to say")};var religion by remember{mutableStateOf(profile?.strOrNull("religion").orEmpty().takeIf{it in religionOptions}?:"Prefer not to say")};var interests by remember{mutableStateOf(profile?.array("interests")?.joinToString(", "){it.jsonPrimitive.content}.orEmpty())};var tags by remember{mutableStateOf(profile?.array("tags")?.joinToString(", "){it.jsonPrimitive.content}.orEmpty())}
+    var race by remember{mutableStateOf(profile?.strOrNull("race")?.let(::canonicalEthnicity)?:"Prefer not to say")};var bodyHair by remember{mutableStateOf(profile?.strOrNull("bodyHair").orEmpty().takeIf{it in bodyHairOptions}?:"Prefer not to say")};var religion by remember{mutableStateOf(profile?.strOrNull("religion").orEmpty().takeIf{it in religionOptions}?:"Prefer not to say")};var interests by remember{mutableStateOf(profile?.array("interests")?.joinToString(", "){it.jsonPrimitive.content}.orEmpty())};var tags by remember{mutableStateOf(profile?.array("tags")?.joinToString(", "){it.jsonPrimitive.content}.orEmpty())}
+    LaunchedEffect(Unit){runCatching{fetchEthnicityOptions()}.onSuccess{options->ethnicityOptions=options;if(race !in options)race=options.firstOrNull()?:"Prefer not to say"}}
     var intentions by remember{mutableStateOf(profile?.array("intentions")?.mapNotNull{it.jsonPrimitive.contentOrNull}?.toSet()?:emptySet())};var tribes by remember{mutableStateOf(profile?.strOrNull("clanTribe")?.split(',')?.map{it.trim()}?.filter{it.isNotBlank()}?.toSet()?:emptySet())};var kinks by remember{mutableStateOf(profile?.array("kinks")?.mapNotNull{it.jsonPrimitive.contentOrNull}?.toSet()?:emptySet())}
     var height by remember{mutableStateOf(profile?.get("heightCm")?.jsonPrimitive?.intOrNull?.toString().orEmpty())};var weight by remember{mutableStateOf(profile?.get("weightKg")?.jsonPrimitive?.intOrNull?.toString().orEmpty())};var hivStatus by remember{mutableStateOf(profile?.strOrNull("hivStatus")?:"Do not show")};var hivDate by remember{mutableStateOf(profile?.strOrNull("hivLastTestDate")?.take(10).orEmpty())};var prep by remember{mutableStateOf(profile?.strOrNull("prepStatus").orEmpty())};var visible by remember{mutableStateOf(profile?.get("visible")?.jsonPrimitive?.booleanOrNull?:true)}
     val social=profile?.objectOrNull("socialLinks");var instagram by remember{mutableStateOf(social?.strOrNull("instagram").orEmpty())};var facebook by remember{mutableStateOf(social?.strOrNull("facebook").orEmpty())};var tiktok by remember{mutableStateOf(social?.strOrNull("tiktok").orEmpty())};var xLink by remember{mutableStateOf(social?.strOrNull("x").orEmpty())};var snapchat by remember{mutableStateOf(social?.strOrNull("snapchat").orEmpty())};var website by remember{mutableStateOf(social?.strOrNull("website").orEmpty())};var saving by remember{mutableStateOf(false)}
