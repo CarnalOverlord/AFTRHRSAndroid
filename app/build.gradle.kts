@@ -19,8 +19,8 @@ android {
         applicationId = "za.co.aftrhrs"
         minSdk = 26
         targetSdk = 36
-        versionCode = 55
-        versionName = "1.5.1"
+        versionCode = 58
+        versionName = "1.6.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
