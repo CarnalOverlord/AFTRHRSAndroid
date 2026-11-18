@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +29,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.animation.core.*
+import androidx.compose.ui.graphics.Color
+import android.provider.Settings
+import android.content.Context
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -107,8 +117,28 @@ import kotlin.coroutines.resume
     }
 }
 
-@Composable private fun LaunchScreen() = Column(Modifier.fillMaxSize(), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.Center) {
-    Image(painterResource(R.drawable.crescent_logo), "AFTRHRS", Modifier.fillMaxWidth(.65f), contentScale=ContentScale.Fit); Spacer(Modifier.height(20.dp)); CircularProgressIndicator(color=HotPink)
+@Composable private fun LaunchScreen() {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black), contentAlignment=Alignment.TopCenter) {
+        Image(painterResource(R.drawable.splash_neon_moon), "AFTRHRS Neon Moon", Modifier.fillMaxSize(), contentScale=ContentScale.Fit)
+        AFTRHRSNeonLoader(Modifier.offset(y=maxHeight * .695f - 24.dp).size(48.dp))
+    }
+}
+
+@Composable fun AFTRHRSNeonLoader(modifier: Modifier = Modifier) {
+    val context=LocalContext.current
+    val reduceMotion=remember { Settings.Global.getFloat(context.contentResolver,"animator_duration_scale",1f)==0f }
+    val transition=rememberInfiniteTransition(label="neon-loader")
+    val rotation by transition.animateFloat(initialValue=0f,targetValue=360f,animationSpec=infiniteRepeatable(tween(1200,easing=LinearEasing),RepeatMode.Restart),label="rotation")
+    val glow by transition.animateFloat(initialValue=.45f,targetValue=1f,animationSpec=infiniteRepeatable(tween(900,easing=FastOutSlowInEasing),RepeatMode.Reverse),label="glow")
+    Canvas(modifier.semantics { contentDescription="Loading" }) {
+        val stroke=2.dp.toPx()
+        val diameter=size.minDimension-stroke
+        val colors=listOf(Color(0xFFA020F0),Color(0xFFCC20FF),Color(0xFFFF00FF),Color(0xFFEDE4FF))
+        drawArc(Color(0x99502A70),0f,360f,false,style=Stroke(stroke))
+        val angle=if(reduceMotion)0f else rotation
+        drawArc(Brush.sweepGradient(colors),-90f+angle,108f,false,style=Stroke(3.2.dp.toPx(),cap=StrokeCap.Round))
+        drawArc(Brush.sweepGradient(colors.map{it.copy(alpha=if(reduceMotion).28f else .25f*glow)}),-90f+angle,108f,false,style=Stroke(7.dp.toPx(),cap=StrokeCap.Round))
+    }
 }
 
 @Composable private fun LockScreen(busy: Boolean, error: String?, unlock: () -> Unit) = Column(Modifier.fillMaxSize().padding(28.dp), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.Center) {
