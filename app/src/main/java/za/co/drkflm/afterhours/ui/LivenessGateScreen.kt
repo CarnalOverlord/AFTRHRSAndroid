@@ -48,6 +48,7 @@ import za.co.aftrhrs.data.ApiException
 import za.co.aftrhrs.data.ApiClient
 import za.co.aftrhrs.data.objectOrNull
 import za.co.aftrhrs.data.str
+import za.co.aftrhrs.data.strOrNull
 import java.time.Instant
 
 private data class LivenessChallenge(val sessionId: String, val providerSessionId: String, val region: String)
@@ -60,6 +61,8 @@ fun LivenessGateScreen(vm: AppViewModel) {
     var pendingResultSessionId by remember { mutableStateOf<String?>(null) }
     var running by remember { mutableStateOf(false) }
     var completed by remember { mutableStateOf(false) }
+    var ageStatus by remember { mutableStateOf("NOT_STARTED") }
+    var ageRequired by remember { mutableStateOf(false) }
     var presentingDetector by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var cameraDenied by remember { mutableStateOf(false) }
@@ -69,6 +72,12 @@ fun LivenessGateScreen(vm: AppViewModel) {
         val data = ApiClient.request("liveness/status").jsonObject
         val liveness = data["liveness"]?.jsonObject
         completed = liveness?.str("status") == "PASSED"
+        val age = data["ageAssurance"]?.jsonObject
+        ageStatus = age?.str("status") ?: "NOT_STARTED"
+        ageRequired = age?.get("required")?.jsonPrimitive?.content?.toBooleanStrictOrNull() == true
+        if (ageStatus in setOf("ADDITIONAL_VERIFICATION_REQUIRED", "REVIEW_REQUIRED")) {
+            message = if (ageStatus == "REVIEW_REQUIRED") "Your age screen needs a support review. Contact support to continue." else "The automated age screen needs additional verification. Contact support to continue."
+        }
         val session = liveness?.get("session")?.jsonObject
         if (session?.str("status") in setOf("ISSUED", "IN_PROGRESS", "PROCESSING")) {
             pendingResultSessionId = session?.get("sessionId")?.jsonPrimitive?.content
@@ -96,10 +105,12 @@ fun LivenessGateScreen(vm: AppViewModel) {
         message = "Checking your result securely…"
         try {
             var finalStatus: String? = null
+            var finalAgeStatus: String? = null
             for (attempt in 0 until 8) {
                 val result = ApiClient.request("liveness/result", io.ktor.http.HttpMethod.Post,
                     buildJsonObject { put("sessionId", sessionId) }).jsonObject
                 finalStatus = result.str("status")
+                finalAgeStatus = result["ageAssurance"]?.jsonObject?.strOrNull("status")
                 if (finalStatus !in setOf("IN_PROGRESS", "CREATED")) break
                 delay(if (attempt == 0) 2_000 else 3_000)
             }
@@ -110,7 +121,14 @@ fun LivenessGateScreen(vm: AppViewModel) {
             refreshStatus()
             pendingResultSessionId = null
             challenge = null
-            message = if (completed) null else "AFTRHRS did not approve this attempt. Try again in good light."
+            finalAgeStatus?.let { ageStatus = it }
+            message = when {
+                ageStatus == "ADDITIONAL_VERIFICATION_REQUIRED" -> "The automated age screen needs additional verification. Contact support to continue."
+                ageStatus == "REVIEW_REQUIRED" -> "Your age screen needs a support review. Contact support to continue."
+                ageStatus == "TEMPORARY_FAILURE" -> "Your age screen is temporarily unavailable. Your account remains protected; retry shortly."
+                completed -> null
+                else -> "AFTRHRS did not approve this attempt. Try again in good light."
+            }
         } catch (_: Exception) {
             message = "We couldn’t retrieve the result yet. Reconnect and check this attempt again; your account stays locked until AFTRHRS confirms it."
         } finally {
@@ -168,12 +186,14 @@ fun LivenessGateScreen(vm: AppViewModel) {
         Text(if (completed) "Liveness confirmed" else "A quick camera safety check", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(14.dp))
         Text(
-            if (completed) "Your liveness check was confirmed by AFTRHRS. Continue to your profile and the app."
-            else "AFTRHRS checks that a real person is present before profile setup and member features become available. This checks liveness only; it does not verify identity or age. ID verification is optional and can be completed later for the verified badge.",
+            if (completed && ageStatus == "PASSED") "Your liveness and age assurance checks were confirmed by AFTRHRS. Continue to your profile and the app."
+            else if (completed && ageRequired) "Your liveness check passed. Additional age assurance is still required before member features become available."
+            else if (completed) "Your liveness check was confirmed by AFTRHRS. Age screening is not currently required for your account."
+            else "AFTRHRS checks that a real person is present and, when enabled for your account, performs an age screening using the liveness reference image. The estimate is a screening signal, not proof of age. ID verification is separate and optional.",
             color = Muted
         )
         Spacer(Modifier.height(18.dp))
-        if (!completed) {
+        if (!completed || (ageRequired && ageStatus != "PASSED")) {
             Column(Modifier.fillMaxWidth().glassCard(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("• Use the front camera in a well-lit place")
                 Text("• Follow the on-screen movement and light prompts")
