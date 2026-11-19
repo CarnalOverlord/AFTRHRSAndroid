@@ -112,6 +112,7 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     var spotlightExhausted by remember { mutableStateOf(false) }
     var spotlightError by remember { mutableStateOf<String?>(null) }
     var advanced by remember { mutableStateOf(false) }
+    var pulseScreen by remember { mutableStateOf(false) }
     val serverEntitlements = vm.entitlements.value
     var criteria by remember { mutableStateOf(DiscoveryFilters()) }
     suspend fun loadSpotlight() {
@@ -178,6 +179,7 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     val gridRevision = Presence.revision.intValue
     LaunchedEffect(gridRevision) { if(gridRevision>0 && !loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } }
     LaunchedEffect(Unit) { while(true) { delay(30_000); if(!loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } } }
+    if(pulseScreen){PulseScreen(vm,openPremium={pulseScreen=false},close={pulseScreen=false});return}
     selected?.let { ProfileScreen(vm,it.str("id")){selected=null}; return }
     Column(Modifier.fillMaxSize()) {
         PullToRefreshBox(isRefreshing=loading,onRefresh={load()},modifier=Modifier.weight(1f)) {
@@ -197,7 +199,7 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
                     modifier=Modifier.fillMaxWidth().height(250.dp).padding(horizontal=12.dp, vertical=4.dp)
                 )
                 }
-                item { Header("The Grid","Nearby members") { Row(verticalAlignment=Alignment.CenterVertically){IconButton({filters=true}){Icon(Icons.Default.Tune,"Filters")} } } }
+                item { Header("The Grid","Nearby members") { Row(verticalAlignment=Alignment.CenterVertically){TextButton({pulseScreen=true}){Icon(Icons.Default.GraphicEq,"Pulse",tint=Lavender);Text(" Pulse",color=Lavender,fontWeight=FontWeight.Bold)};IconButton({filters=true}){Icon(Icons.Default.Tune,"Filters")} } } }
                 items(items.chunked(2)) { row ->
                     Row(Modifier.fillMaxWidth().padding(horizontal=6.dp)) {
                         row.forEach { profile -> Box(Modifier.weight(1f).padding(6.dp)){ProfileTile(profile.jsonObject){selected=profile.jsonObject}} }
@@ -278,6 +280,16 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
         Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(43.dp).clip(CircleShape).background(Color(0xBB333039)).clickable(enabled=!liking){
             liking=true;scope.launch {try {ApiClient.request("likes/${p.str("id")}",if(liked)HttpMethod.Delete else HttpMethod.Post);liked=!liked}catch(_:Exception){}finally{liking=false}}
         },contentAlignment=Alignment.Center){Icon(if(liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,"Like ${p.str("displayName")}",tint=if(liked) Color(0xFFFF29B7) else Color.White,modifier=Modifier.size(26.dp))}
+        p.objectOrNull("pulse")?.let { pulse ->
+            val intention=PulseIntention.from(pulse.strOrNull("primaryIntent"))
+            val expiresAt=pulse.strOrNull("expiresAt")
+            if(intention!=null && expiresAt!=null && pulseRemainingSeconds(expiresAt,System.currentTimeMillis(),0L)>0) {
+                Row(Modifier.align(Alignment.TopStart).padding(start=9.dp,top=58.dp).clip(RoundedCornerShape(50)).background(Color(0xDD7010A8)).border(1.dp,Color(0xFFFF55D8),RoundedCornerShape(50)).padding(horizontal=9.dp,vertical=5.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Default.GraphicEq,"Active Pulse",tint=Color.White,modifier=Modifier.size(14.dp))
+                    Text("Pulse · ${intention.title}",color=Color.White,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                }
+            }
+        }
         val presenceState=p.strOrNull("presenceState") ?: if(p.bool("online")) "ONLINE" else "OFFLINE"
         if(presenceState=="ONLINE" || presenceState=="RECENT") Row(Modifier.align(Alignment.TopStart).padding(9.dp).background(Color(0xCC14221B),RoundedCornerShape(12.dp)).padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(8.dp).background(if(presenceState=="ONLINE")Color(0xFF43D17A)else Color(0xFFFFC66D),CircleShape));Text(if(presenceState=="ONLINE")"Online" else "Recently active",color=Color.White,style=MaterialTheme.typography.labelSmall)}
         Column(Modifier.matchParentSize().padding(9.dp)){
@@ -300,13 +312,114 @@ private fun publicProfileText(value:String?):String? = value.visibleProfileValue
         } }
     }
 }
+@Composable private fun LinkedPartnersSection(partners:JsonArray,openProfile:(String)->Unit) {
+    val visible=partners.mapNotNull { it as? JsonObject }.filter { it.strOrNull("id")!=null }
+    if(visible.isEmpty())return
+    Column(Modifier.fillMaxWidth().glassCard(),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        Text("Linked partners",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+        visible.forEach { partner ->
+            Row(Modifier.fillMaxWidth().clickable { openProfile(partner.str("id")) }.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                val name=partner.str("displayName").ifBlank { "Member" }
+                if(!partner.strOrNull("photoUrl").isNullOrBlank()) Avatar(partner.strOrNull("photoUrl"),Modifier.size(52.dp))
+                else Box(Modifier.size(52.dp).background(Electric.copy(alpha=.18f),CircleShape),contentAlignment=Alignment.Center){Text(name.first().uppercase(),color=Lavender,fontWeight=FontWeight.Bold)}
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                    Text(name,color=Color.White,fontWeight=FontWeight.SemiBold)
+                    Text("Confirmed partner",color=Lavender,style=MaterialTheme.typography.bodySmall)
+                }
+                Icon(Icons.Default.ChevronRight,"Open $name profile",tint=Lavender)
+            }
+        }
+    }
+}
+private fun PulseSession.profileProjection()=buildJsonObject {
+    put("primaryIntent",primaryIntent.wire)
+    put("secondaryIntents",buildJsonArray{secondaryIntents.forEach{add(it.wire)}})
+    if(message==null)put("message",JsonNull)else put("message",message)
+    put("expiresAt",expiresAt)
+}
+@Composable private fun ProfilePulseSection(pulse:JsonObject,serverOffsetMillis:Long=0L) {
+    val intention=PulseIntention.from(pulse.strOrNull("primaryIntent")) ?: return
+    val expiresAt=pulse.strOrNull("expiresAt") ?: return
+    val lifecycleOwner=androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var now by remember(expiresAt){mutableLongStateOf(System.currentTimeMillis())}
+    LaunchedEffect(lifecycleOwner,expiresAt) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while(true){now=System.currentTimeMillis();delay(60_000)}
+        }
+    }
+    val remaining=pulseRemainingSeconds(expiresAt,now,serverOffsetMillis)
+    if(remaining<=0)return
+    Column(Modifier.fillMaxWidth().background(Raised,RoundedCornerShape(22.dp)).border(1.dp,Lavender.copy(alpha=.35f),RoundedCornerShape(22.dp)).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment=Alignment.CenterVertically){Text("ACTIVE PULSE",color=Lavender,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelMedium,modifier=Modifier.weight(1f));Text("${(remaining+59)/60} min left",color=Lavender,style=MaterialTheme.typography.labelSmall)}
+        Text(intention.title,color=Color.White,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+        val secondary=pulse.array("secondaryIntents").mapNotNull { PulseIntention.from((it as? JsonPrimitive)?.contentOrNull)?.title }
+        if(secondary.isNotEmpty())Text(secondary.joinToString(" · "),color=Muted)
+        pulse.strOrNull("message")?.trim()?.takeIf { it.isNotEmpty() }?.let { Text(it,color=Color.White) }
+    }
+}
 private fun JsonObject.publicList(key:String):String? = array(key).mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.let(::publicProfileText) }.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 private fun JsonObject.publicString(key:String):String? = publicProfileText(strOrNull(key))
 private fun ethnicityDisplay(value:String?):String?=value?.let(::canonicalEthnicity)?.let(::publicProfileText)
+private data class ProfileSocialDestination(val key:String,val title:String,val uri:Uri)
+private fun profileSocialDestination(key:String,title:String,raw:String?):ProfileSocialDestination? {
+    val value=raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    if(value.startsWith("//"))return null
+    val scheme=runCatching { java.net.URI(value).scheme?.lowercase() }.getOrNull()
+    val normalized=when {
+        scheme!=null -> if(scheme=="http"||scheme=="https")value else return null
+        value.contains('.')||value.contains('/') -> "https://$value"
+        else -> {
+            if(key=="website"||!value.trim('@').matches(Regex("[a-zA-Z0-9._-]{1,60}")))return null
+            val handle=Uri.encode(value.trim('@'))
+            when(key){
+                "instagram"->"https://www.instagram.com/$handle"
+                "facebook"->"https://www.facebook.com/$handle"
+                "tiktok"->"https://www.tiktok.com/@$handle"
+                "x"->"https://x.com/$handle"
+                "snapchat"->"https://www.snapchat.com/add/$handle"
+                else->return null
+            }
+        }
+    }
+    val parsed=runCatching { java.net.URI(normalized) }.getOrNull() ?: return null
+    val host=parsed.host?.lowercase()?.takeIf { it.contains('.') } ?: return null
+    if(parsed.scheme?.lowercase() !in setOf("http","https")||parsed.userInfo!=null)return null
+    val allowed=when(key){
+        "instagram"->listOf("instagram.com")
+        "facebook"->listOf("facebook.com","fb.com")
+        "tiktok"->listOf("tiktok.com")
+        "x"->listOf("x.com","twitter.com")
+        "snapchat"->listOf("snapchat.com")
+        "website"->emptyList()
+        else->return null
+    }
+    if(allowed.isNotEmpty()&&allowed.none { host==it||host.endsWith(".$it") })return null
+    return ProfileSocialDestination(key,title,Uri.parse(parsed.toASCIIString()))
+}
+@Composable private fun ProfileSocialLinksSection(links:JsonObject,onOpen:(ProfileSocialDestination)->Unit) {
+    val definitions=listOf("instagram" to "Instagram","facebook" to "Facebook","tiktok" to "TikTok","x" to "X","snapchat" to "Snapchat","website" to "Website")
+    val destinations=definitions.mapNotNull { (key,title)->profileSocialDestination(key,title,links.strOrNull(key)) }
+    if(destinations.isEmpty())return
+    Column(Modifier.fillMaxWidth().glassCard(),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+        Text("Social links",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+        destinations.forEach { destination ->
+            Row(Modifier.fillMaxWidth().clickable { onOpen(destination) }.padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Default.OpenInNew,"Open ${destination.title}",tint=Lavender,modifier=Modifier.size(20.dp))
+                Text(destination.title,color=Color.White,modifier=Modifier.weight(1f))
+                Text(destination.uri.host.orEmpty(),color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1,overflow=TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
 
 @Composable fun ProfileScreen(vm:AppViewModel,id:String,back:()->Unit){
-    BackHandler(onBack=back)
+    var linkedPartnerId by remember(id){mutableStateOf<String?>(null)}
+    BackHandler(enabled=linkedPartnerId==null,onBack=back)
+    linkedPartnerId?.let { partnerId -> ProfileScreen(vm,partnerId){linkedPartnerId=null};return }
     var p by remember{mutableStateOf<JsonObject?>(null)}
+    var ownPulse by remember(id){mutableStateOf<JsonObject?>(null)}
+    var ownPulseServerOffset by remember(id){mutableLongStateOf(0L)}
+    val isOwnProfile=vm.user.value?.str("id")==id
     var safety by remember{mutableStateOf(false)}
     var reportWithBlock by remember(id){mutableStateOf<Boolean?>(null)}
     var reportReason by remember(id){mutableStateOf("Fake Profile")}
@@ -324,7 +437,8 @@ private fun ethnicityDisplay(value:String?):String?=value?.let(::canonicalEthnic
         }
     }
     val scope=rememberCoroutineScope()
-    LaunchedEffect(id){vm.runTask{val data=ApiClient.request("profiles/$id").jsonObject;p=data;liked=data.bool("liked")}}
+    val context=LocalContext.current
+    LaunchedEffect(id,isOwnProfile){vm.runTask{val data=ApiClient.request("profiles/$id").jsonObject;p=data;liked=data.bool("liked");if(isOwnProfile){val me=runCatching{ApiClient.pulseRequest("me").asPulseMe()}.getOrNull();ownPulse=me?.session?.profileProjection();ownPulseServerOffset=me?.serverTime?.let{runCatching{Instant.parse(it).toEpochMilli()-System.currentTimeMillis()}.getOrNull()}?:0L}else{ownPulse=null;ownPulseServerOffset=0L}}}
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){
         Header(p?.objectOrNull("profile")?.str("displayName")?:"Profile"){IconButton(back){Icon(Icons.Default.ArrowBack,"Back",tint=Color.White)}}
         p?.let{data->
@@ -347,7 +461,10 @@ private fun ethnicityDisplay(value:String?):String?=value?.let(::canonicalEthnic
                 }
             }
             Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
-                Text("${profile.str("displayName")}${data["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White)
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    Text("${profile.str("displayName")}${data["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White,modifier=Modifier.weight(1f),maxLines=2,overflow=TextOverflow.Ellipsis)
+                    if(data.bool("verified"))Icon(Icons.Default.Verified,"Verified profile",tint=Color(0xFF78E8FF),modifier=Modifier.size(24.dp))
+                }
                 val location=data.objectOrNull("location")
                 val metadata=listOf(location?.strOrNull("distance").visibleProfileValue(),profile.strOrNull("presenceLabel").visibleProfileValue()).filterNotNull()
                 if(metadata.isNotEmpty())Text(metadata.joinToString(" · "),color=Lavender)
@@ -355,6 +472,8 @@ private fun ethnicityDisplay(value:String?):String?=value?.let(::canonicalEthnic
                     ElectricButton({if(!liking){liking=true;scope.launch{try{val wasLiked=liked;ApiClient.request("likes/$id",if(wasLiked)HttpMethod.Delete else HttpMethod.Post);liked=!wasLiked}catch(e:Exception){vm.error.value=e.message?:"Could not update this like"}finally{liking=false}}}},Modifier.weight(1f)){Icon(if(liked)Icons.Default.Favorite else Icons.Default.FavoriteBorder,null);Text(if(liking)" Updating..." else if(liked)" Unlike" else " Like")}
                     ElectricButton({scope.launch{try{val conversation=ApiClient.request("conversations",HttpMethod.Post,obj("userId" to id)).jsonObject;val conversationId=conversation.str("id");if(conversationId.isBlank())throw IllegalStateException("Could not open conversation");vm.pendingConversation.value=conversationId}catch(e:Exception){vm.error.value=e.message?:"Could not open chat"}}},Modifier.weight(1f)){Icon(Icons.Default.Chat,null);Text(" Message")}
                 }
+                (data.objectOrNull("pulse") ?: if(isOwnProfile)ownPulse else null)?.let { pulse -> ProfilePulseSection(pulse,ownPulseServerOffset) }
+                LinkedPartnersSection(data.array("partners")){partnerId->linkedPartnerId=partnerId}
                 profile.publicString("bio")?.let { Text(it,Modifier.glassCard(),color=Color.White) }
                 ProfileDetailsSection("About",listOf(
                     "Gender" to profile.publicString("gender"),
@@ -384,16 +503,7 @@ private fun ethnicityDisplay(value:String?):String?=value?.let(::canonicalEthnic
                     "Last HIV test" to (if(profile.publicString("hivStatus")!=null) profile.publicString("hivLastTestDate")?.take(10) else null),
                     "PrEP" to profile.publicString("prepStatus")
                 ))
-                profile.objectOrNull("socialLinks")?.let { links ->
-                    ProfileDetailsSection("Social links",listOf(
-                        "Instagram" to links.publicString("instagram"),
-                        "Facebook" to links.publicString("facebook"),
-                        "TikTok" to links.publicString("tiktok"),
-                        "X" to links.publicString("x"),
-                        "Snapchat" to links.publicString("snapchat"),
-                        "Website" to links.publicString("website")
-                    ))
-                }
+                profile.objectOrNull("socialLinks")?.let { links -> ProfileSocialLinksSection(links){destination->runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,destination.uri))}.onFailure{vm.error.value="Unable to open this social link."}} }
                 TextButton({safety=true},Modifier.align(Alignment.CenterHorizontally)){Text("Block or report",color=Color(0xFFFFB4AB))}
             }
         }

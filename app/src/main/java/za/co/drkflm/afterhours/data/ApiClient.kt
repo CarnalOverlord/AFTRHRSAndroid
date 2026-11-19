@@ -19,7 +19,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import coil3.network.NetworkHeaders
 
-class ApiException(message: String) : Exception(message)
+class ApiException(message: String, val code: String? = null, val status: Int? = null, val retryAfterSeconds: Long? = null) : Exception(message)
 
 object ApiClient {
     const val ORIGIN = "https://app.aftrhrs.co.za"
@@ -41,7 +41,16 @@ object ApiClient {
             this.method = method
             if (body != null) { contentType(ContentType.Application.Json); setBody(body) }
         }
-        return unwrap(response.status.value, response.body<String>())
+        return unwrap(response.status.value, response.body<String>(), response.headers["Retry-After"]?.toLongOrNull())
+    }
+
+    /** Pulse is a backend feature router outside the legacy /api/v1 namespace. */
+    suspend fun pulseRequest(path: String, method: HttpMethod = HttpMethod.Get, body: JsonElement? = null): JsonElement {
+        val response = client.request("$ORIGIN/api/pulse/$path") {
+            this.method = method
+            if (body != null) { contentType(ContentType.Application.Json); setBody(body) }
+        }
+        return unwrapPulseResponse(response.status.value, response.body<String>(), response.headers["Retry-After"]?.toLongOrNull())
     }
 
     suspend fun linkPreview(url: String): JsonObject? {
@@ -126,14 +135,20 @@ object ApiClient {
         set("X-AFTRHRS-Client", "AFTRHRS-Native-Android/1.0")
     }.build()
 
-    private fun unwrap(status: Int, raw: String): JsonElement {
+    private fun unwrap(status: Int, raw: String, retryAfter: Long? = null): JsonElement {
         val envelope = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrElse {
-            throw ApiException("The server returned an unreadable response.")
+            val normalized = raw.trimStart().lowercase()
+            if (status >= 500 || normalized.startsWith("<!doctype html") || normalized.startsWith("<html") || normalized.contains("502 bad gateway")) {
+                throw ApiException("AFTRHRS is temporarily unavailable. Please try again shortly.")
+            }
+            throw ApiException("The server returned an unexpected response. Please try again shortly.")
         }
         val ok = envelope["ok"]?.jsonPrimitive?.booleanOrNull == true
         if (status !in 200..299 || !ok) {
-            val message = envelope["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull ?: "Request failed"
-            throw ApiException(message)
+            val error = envelope["error"]?.jsonObject
+            val message = error?.get("message")?.jsonPrimitive?.contentOrNull ?: "Request failed"
+            val code = error?.get("code")?.jsonPrimitive?.contentOrNull ?: error?.get("error")?.jsonPrimitive?.contentOrNull
+            throw ApiException(message, code, status, retryAfter ?: error?.get("retryAfter")?.jsonPrimitive?.longOrNull)
         }
         return envelope["data"] ?: JsonNull
     }
@@ -141,6 +156,30 @@ object ApiClient {
     fun mediaUrl(value: String?): String? = value?.takeIf { it.isNotBlank() }?.let {
         if (it.startsWith("http://") || it.startsWith("https://")) it else "$ORIGIN${if (it.startsWith('/')) "" else "/"}$it"
     }
+}
+
+/** Pulse uses direct JSON bodies and `{ error: "CODE" }`, unlike the legacy API envelope. */
+internal fun unwrapPulseResponse(status: Int, raw: String, retryAfter: Long? = null): JsonElement {
+    val body = runCatching { Json.parseToJsonElement(raw) }.getOrElse {
+        if (status >= 500) throw ApiException("AFTRHRS is temporarily unavailable. Please try again shortly.", status = status)
+        throw ApiException("The Pulse server returned an unexpected response.", status = status)
+    }
+    if (status !in 200..299) {
+        val error = (body as? JsonObject)?.get("error")
+        val errorObject = error as? JsonObject
+        val code = error?.let { value ->
+            (value as? JsonPrimitive)?.contentOrNull
+                ?: errorObject?.get("code")?.jsonPrimitive?.contentOrNull
+                ?: errorObject?.get("error")?.jsonPrimitive?.contentOrNull
+        }
+        val message = errorObject?.get("message")?.jsonPrimitive?.contentOrNull
+            ?: code
+            ?: "Pulse request failed. Please try again."
+        val bodyRetry = (body as? JsonObject)?.get("retryAfterSeconds")?.jsonPrimitive?.longOrNull
+            ?: errorObject?.get("retryAfter")?.jsonPrimitive?.longOrNull
+        throw ApiException(message, code, status, retryAfter ?: bodyRetry)
+    }
+    return body
 }
 
 fun obj(vararg pairs: Pair<String, Any?>): JsonObject = buildJsonObject {
