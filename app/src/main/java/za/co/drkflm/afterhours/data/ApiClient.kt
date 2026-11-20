@@ -53,6 +53,20 @@ object ApiClient {
         return unwrapPulseResponse(response.status.value, response.body<String>(), response.headers["Retry-After"]?.toLongOrNull())
     }
 
+    /** Premium Bucket List lives outside the legacy v1 router. No trailing slash on mutations. */
+    suspend fun bucketListRequest(path: String = "", method: HttpMethod = HttpMethod.Get, body: JsonElement? = null): JsonElement {
+        val endpoint = "$ORIGIN/api/bucket-list" + when {
+            path.isBlank() -> ""
+            path.startsWith("?") || path.startsWith("/") -> path
+            else -> "/$path"
+        }
+        val response = client.request(endpoint) {
+            this.method = method
+            if (body != null) { contentType(ContentType.Application.Json); setBody(body) }
+        }
+        return unwrap(response.status.value, response.body<String>(), response.headers["Retry-After"]?.toLongOrNull())
+    }
+
     suspend fun linkPreview(url: String): JsonObject? {
         val response = client.get("$ORIGIN/api/link-preview") { parameter("url", url) }
         if (response.status.value !in 200..299) return null
