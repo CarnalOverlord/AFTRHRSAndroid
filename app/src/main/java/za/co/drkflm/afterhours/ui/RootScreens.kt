@@ -399,7 +399,7 @@ private fun MainTabs(vm: AppViewModel, lockEnabled: Boolean, setLock: (Boolean) 
                 1 -> LikesScreen(vm)
                 2 -> InboxScreen(vm, chatsReselect)
                 3 -> PremiumScreen(vm)
-                else -> MeScreen(vm, lockEnabled, setLock)
+                else -> MeScreen(vm, lockEnabled, setLock) { tab = 3 }
             }
         }
     }
