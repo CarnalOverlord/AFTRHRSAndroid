@@ -5,6 +5,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -15,7 +16,11 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
@@ -23,6 +28,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import coil3.compose.AsyncImage
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
 import io.ktor.http.HttpMethod
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -72,7 +80,7 @@ private class PulseState {
         } catch(e:Exception) { if(generation==requestGeneration) error=prettyPulseError(e) }
         finally { if(generation==requestGeneration)loadingMore=false }
     }
-    suspend fun open(summary:PulseSummary) { detail=summary; detailLoading=true; try { val result=repo.detail(summary.id); updateOffset(result.serverTime); if(result.pulse==null) { unavailable(summary.id); detail=null } else detail=result.pulse } catch(e:Exception) { error=prettyPulseError(e); if(prettyPulseCode(e)=="PULSE_UNAVAILABLE"){unavailable(summary.id);detail=null} } finally { detailLoading=false } }
+    suspend fun open(summary:PulseSummary) { detail=summary; detailLoading=true; try { val result=repo.detail(summary.id); updateOffset(result.serverTime); if(result.pulse==null) { unavailable(summary.id); detail=null } else detail=result.pulse.copy(displayName=result.pulse.displayName?:summary.displayName,photoUrl=result.pulse.photoUrl?:summary.photoUrl) } catch(e:Exception) { error=prettyPulseError(e); if(prettyPulseCode(e)=="PULSE_UNAVAILABLE"){unavailable(summary.id);detail=null} } finally { detailLoading=false } }
     fun unavailable(id:String){pulses=pulses.filterNot{it.id==id}; if(pulses.isEmpty()&&cursor!=null)refreshJob=null}
 }
 
@@ -89,9 +97,10 @@ private fun prettyPulseError(e:Throwable):String = when(prettyPulseCode(e)) {
     else -> "Pulse could not be loaded. Check your connection and try again."
 }
 
-@Composable fun PulseScreen(vm:AppViewModel,openPremium:()->Unit,close:()->Unit) {
+@Composable fun PulseScreen(vm:AppViewModel,openPremium:()->Unit,close:()->Unit,gridProfiles:JsonArray=JsonArray(emptyList())) {
     val state=remember { PulseState() }; val scope= rememberCoroutineScope(); val lifecycle= LocalLifecycleOwner.current
     var composer by rememberSaveable { mutableStateOf(false) }; var selected by remember { mutableStateOf<PulseSummary?>(null) }; var clock by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val gridProfilesByUser=remember(gridProfiles){gridProfiles.mapNotNull{(it as? JsonObject)?.let{profile->profile.strOrNull("id")?.let{id->id to profile}}}.toMap()}
     LaunchedEffect(Unit){ state.refreshMe();state.refresh() }
     LaunchedEffect(lifecycle){ lifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED){ while(true){ clock=System.currentTimeMillis();state.now=clock;state.pulses=state.pulses.filter{pulseRemainingSeconds(it.expiresAt,clock,state.offset)>0};delay(60_000);if(state.active==null&&state.me?.session!=null)state.refreshMe() } } }
     BackHandler { when { selected!=null->{selected=null;state.detail=null};composer->composer=false;else->close() } }
@@ -102,11 +111,15 @@ private fun prettyPulseError(e:Throwable):String = when(prettyPulseCode(e)) {
         if(state.error!=null && state.pulses.isEmpty()) Column(Modifier.fillMaxWidth().padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){Text(state.error!!,color=PulseMuted,textAlign=TextAlign.Center);ElectricButton({scope.launch{state.refreshMe();state.refresh()}}){Text("Try again")}}
         else PullToRefreshBox(isRefreshing=state.loading,onRefresh={scope.launch{state.refreshMe();state.refresh() }},modifier=Modifier.fillMaxSize()) {
             LazyColumn(contentPadding=PaddingValues(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                item { Column(Modifier.fillMaxWidth().background(PulseSurface,RoundedCornerShape(22.dp)).border(1.dp,PulseAccent.copy(alpha=.35f),RoundedCornerShape(22.dp)).padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)) { Text("THE MOMENT IS YOURS",color=PulseAccent,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelMedium);Text("A little intention can start something real.",color=Color.White,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold);Text("Share what you’re open to and discover other active Pulses.",color=PulseMuted);ElectricButton({composer=true},Modifier.fillMaxWidth()){Icon(Icons.Default.Add,null);Text(if(state.active!=null)" Manage my Pulse" else " Create my Pulse")} } }
-                item { state.active?.let { ActivePulseCard(it,state,clock, onEdit={composer=true},onEnd={scope.launch{state.busy=true;try{state.repo.end();state.refreshMe();state.refresh()}catch(e:Exception){state.error=prettyPulseError(e)}finally{state.busy=false}}}) } ?: EligibilityCard(state,openPremium) }
-                item { Row(verticalAlignment=Alignment.CenterVertically){Text("Active Pulses",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White,modifier=Modifier.weight(1f));Text("Not limited by Grid radius",style=MaterialTheme.typography.labelSmall,color=PulseMuted)} }
-                if(state.pulses.isEmpty()&&!state.loading&&state.error==null)item{Column(Modifier.fillMaxWidth().padding(vertical=34.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)){Icon(Icons.Default.GraphicEq,null,tint=PulseAccent,modifier=Modifier.size(46.dp));Text("No active Pulses yet",fontWeight=FontWeight.Bold,color=Color.White);Text("Check back soon, or share your own intention.",color=PulseMuted,textAlign=TextAlign.Center)}}
-                items(state.pulses,key={it.id}){pulse->PulseCard(pulse,clock,state.offset,onClick={selected=pulse;scope.launch{state.open(pulse)}})}
+                item { PulseHero(state,onCreate={composer=true}) }
+                item { state.active?.let { ActivePulseCard(it,state,clock,onEdit={composer=true},onEnd={scope.launch{state.busy=true;try{state.repo.end();state.refreshMe();state.refresh()}catch(e:Exception){state.error=prettyPulseError(e)}finally{state.busy=false}}}) } ?: EligibilityCard(state,openPremium) }
+                item { Row(Modifier.padding(top=4.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Live right now",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White);Text("Intentions disappear when their time is up.",color=PulseMuted,style=MaterialTheme.typography.bodySmall)};Surface(color=PulseAccent.copy(alpha=.14f),shape=RoundedCornerShape(50)){Text("${state.pulses.size} active",modifier=Modifier.padding(horizontal=11.dp,vertical=6.dp),color=PulseAccent,style=MaterialTheme.typography.labelMedium,fontWeight=FontWeight.Bold)}} }
+                if(state.pulses.isEmpty()&&!state.loading&&state.error==null)item{EmptyPulseState(onCreate={composer=true})}
+                items(state.pulses,key={it.id}){pulse->
+                    val gridProfile=pulse.userId?.let(gridProfilesByUser::get)
+                    val displayPulse=pulse.copy(displayName=pulse.displayName?:gridProfile?.strOrNull("displayName"),photoUrl=pulse.photoUrl?:gridProfile?.strOrNull("photo"))
+                    PulseCard(displayPulse,clock,state.offset,onClick={selected=displayPulse;scope.launch{state.open(displayPulse)}})
+                }
                 if(state.error!=null&&state.pulses.isNotEmpty())item{Row(verticalAlignment=Alignment.CenterVertically){Text("More Pulses could not load. Your current list is saved.",color=PulseMuted,modifier=Modifier.weight(1f));TextButton({scope.launch{state.error=null;state.more()}}){Text("Retry")}}}
                 if(!state.ended)item { LaunchedEffect(state.cursor,state.pulses.size,state.loadingMore){ if(!state.loadingMore)state.more() }; if(state.loadingMore)Box(Modifier.fillMaxWidth().padding(12.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(color=PulseAccent)} else Spacer(Modifier.height(1.dp)) }
             }
@@ -114,10 +127,91 @@ private fun prettyPulseError(e:Throwable):String = when(prettyPulseCode(e)) {
     }
 }
 
-@Composable private fun EligibilityCard(state:PulseState,openPremium:()->Unit){val entitlement=state.me?.entitlement;Column(Modifier.fillMaxWidth().background(PulseSurface,RoundedCornerShape(18.dp)).padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(if(entitlement?.canPublish==true)if(entitlement.source=="HAPPY_HOUR")"Happy Hour access is active"else"Publishing access is active"else"Your Pulse preferences are ready",fontWeight=FontWeight.Bold,color=Color.White);Text(when{state.me?.eligible==false->"Your account is not currently eligible to publish.";entitlement?.canPublish==false->"Publishing normally requires Premium. Access is confirmed by AFTRHRS.";else->"Save your settings privately or publish when you’re ready."},color=PulseMuted);if(state.me?.eligible!=false&&entitlement?.canPublish==false)TextButton(openPremium){Text("Explore Premium",color=PulseAccent)}}}
-@Composable private fun ActivePulseCard(pulse:PulseSession,state:PulseState,now:Long,onEdit:()->Unit,onEnd:()->Unit){Column(Modifier.fillMaxWidth().background(PulseSurface,RoundedCornerShape(18.dp)).padding(15.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){Row(verticalAlignment=Alignment.CenterVertically){Text("YOUR PULSE IS LIVE",color=PulseAccent,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));Text(remainingLabel(pulse.expiresAt,now,state.offset),color=PulseAccent)};Text(PulseIntention.entries.firstOrNull{it==pulse.primaryIntent}?.title.orEmpty(),color=Color.White,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);if(pulse.secondaryIntents.isNotEmpty())Text(pulse.secondaryIntents.joinToString(" · "){it.title},color=PulseMuted);pulse.message?.takeIf{it.isNotBlank()}?.let{Text(it,color=Color.White)};Text("${pulse.visibility.title} · visible to ${pulse.visibility.title.lowercase()}",color=PulseMuted);Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onEdit){Text("Edit Pulse")};OutlinedButton(onEnd,enabled=!state.busy){Text("End Pulse")}}} }
+@Composable private fun PulseHero(state:PulseState,onCreate:()->Unit){
+    val shape=RoundedCornerShape(26.dp)
+    Box(Modifier.fillMaxWidth().clip(shape).background(Brush.linearGradient(listOf(Color(0xFF351044),Color(0xFF20112F),Color(0xFF120D1B)))).border(1.dp,PulseAccent.copy(alpha=.45f),shape)){
+        Box(Modifier.align(Alignment.TopEnd).padding(top=10.dp,end=16.dp).size(96.dp).background(PulseAccent.copy(alpha=.12f),RoundedCornerShape(48.dp)))
+        Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(7.dp)){
+                Icon(Icons.Default.GraphicEq,null,tint=PulseAccent,modifier=Modifier.size(17.dp))
+                Text("AFTER HOURS, RIGHT NOW",color=PulseAccent,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelSmall)
+            }
+            Text("Find your next spark.",color=Color.White,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+            Text("Real intentions. A little time. See who’s open to the same moment.",color=PulseMuted,style=MaterialTheme.typography.bodyMedium)
+            ElectricButton(onCreate,Modifier.fillMaxWidth()){
+                Icon(if(state.active==null)Icons.Default.Add else Icons.Default.Edit,null)
+                Text(if(state.active==null)" Set your intention" else " Manage your Pulse")
+            }
+        }
+    }
+}
+
+@Composable private fun EligibilityCard(state:PulseState,openPremium:()->Unit){
+    val entitlement=state.me?.entitlement
+    val eligible=state.me?.eligible
+    val canPublish=entitlement?.canPublish==true
+    val tint=when{eligible==false->Color(0xFFFFB36A);canPublish->Color(0xFF75E0B1);else->PulseAccent}
+    Row(Modifier.fillMaxWidth().background(PulseSurface,RoundedCornerShape(18.dp)).border(1.dp,tint.copy(alpha=.28f),RoundedCornerShape(18.dp)).padding(horizontal=14.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+        Box(Modifier.size(36.dp).background(tint.copy(alpha=.13f),RoundedCornerShape(12.dp)),contentAlignment=Alignment.Center){Icon(if(canPublish)Icons.Default.VerifiedUser else Icons.Default.LockOpen,null,tint=tint,modifier=Modifier.size(19.dp))}
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
+            Text(when{eligible==false->"Publishing unavailable";canPublish&&entitlement?.source=="HAPPY_HOUR"->"Happy Hour publishing is on";canPublish->"Premium publishing is on";else->"Your preferences are ready"},color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.bodyMedium)
+            Text(when{eligible==false->"Your account is not currently eligible.";canPublish->"You can publish an intention now.";else->"Premium unlocks publishing. Preferences stay free."},color=PulseMuted,style=MaterialTheme.typography.bodySmall)
+        }
+        if(eligible!=false&&!canPublish)TextButton(openPremium){Text("Explore",color=PulseAccent,fontWeight=FontWeight.Bold)}
+    }
+}
+
+@Composable private fun ActivePulseCard(pulse:PulseSession,state:PulseState,now:Long,onEdit:()->Unit,onEnd:()->Unit){
+    val shape=RoundedCornerShape(22.dp)
+    Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF2E1737),PulseSurface)),shape).border(1.dp,PulseAccent.copy(alpha=.42f),shape).padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+        Row(verticalAlignment=Alignment.CenterVertically){Text("YOUR SIGNAL IS LIVE",color=PulseAccent,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelMedium,modifier=Modifier.weight(1f));Surface(color=PulseAccent.copy(alpha=.16f),shape=RoundedCornerShape(50)){Text(remainingLabel(pulse.expiresAt,now,state.offset),modifier=Modifier.padding(horizontal=10.dp,vertical=5.dp),color=PulseAccent,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)}}
+        Text(pulse.primaryIntent.title,color=Color.White,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+        if(pulse.secondaryIntents.isNotEmpty())Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){pulse.secondaryIntents.forEach{PulseTag(it.title)}}
+        pulse.message?.takeIf{it.isNotBlank()}?.let{Text(it,Modifier.fillMaxWidth().background(Color.Black.copy(alpha=.17f),RoundedCornerShape(14.dp)).padding(12.dp),color=Color.White)}
+        Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Visibility,null,tint=PulseMuted,modifier=Modifier.size(16.dp));Text("  ${pulse.visibility.title} audience",color=PulseMuted,style=MaterialTheme.typography.bodySmall)}
+        Row(horizontalArrangement=Arrangement.spacedBy(9.dp)){
+            OutlinedButton(onEdit,modifier=Modifier.weight(1f)){Icon(Icons.Default.Edit,null,modifier=Modifier.size(16.dp));Spacer(Modifier.width(6.dp));Text("Edit")}
+            OutlinedButton(onEnd,enabled=!state.busy,modifier=Modifier.weight(1f)){Icon(Icons.Default.StopCircle,null,modifier=Modifier.size(16.dp));Spacer(Modifier.width(6.dp));Text(if(state.busy)"Ending…" else "End Pulse")}
+        }
+    }
+}
+
+@Composable private fun PulseTag(label:String){Surface(color=PulseAccent.copy(alpha=.13f),shape=RoundedCornerShape(50),border=androidx.compose.foundation.BorderStroke(1.dp,PulseAccent.copy(alpha=.28f))){Text(label,modifier=Modifier.padding(horizontal=9.dp,vertical=5.dp),color=PulseMuted,style=MaterialTheme.typography.labelSmall)}}
+
+@Composable private fun PulseAvatar(name:String?,photoUrl:String?){
+    val context=LocalContext.current
+    val shape=CircleShape
+    val image=remember(photoUrl){photoUrl?.let{ImageRequest.Builder(context).data(ApiClient.mediaUrl(it)).httpHeaders(ApiClient.imageHeaders()).build()}}
+    Box(Modifier.size(58.dp).clip(shape).background(Brush.linearGradient(listOf(PulseAccent.copy(alpha=.34f),Color(0xFF552A68)))).border(1.dp,PulseAccent.copy(alpha=.55f),shape),contentAlignment=Alignment.Center){
+        Text(name?.firstOrNull()?.uppercase()?:"•",color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium)
+        image?.let{AsyncImage(model=it,contentDescription="Profile photo for ${name?:"member"}",modifier=Modifier.fillMaxSize().clip(shape),contentScale=ContentScale.Crop)}
+    }
+}
+
+@Composable private fun EmptyPulseState(onCreate:()->Unit){
+    Column(Modifier.fillMaxWidth().padding(vertical=28.dp,horizontal=12.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(9.dp)){
+        Box(Modifier.size(62.dp).background(Brush.radialGradient(listOf(PulseAccent.copy(alpha=.35f),PulseAccent.copy(alpha=.04f))),RoundedCornerShape(31.dp)),contentAlignment=Alignment.Center){Icon(Icons.Default.GraphicEq,null,tint=PulseAccent,modifier=Modifier.size(28.dp))}
+        Text("It’s quiet out there",fontWeight=FontWeight.Bold,color=Color.White,style=MaterialTheme.typography.titleLarge)
+        Text("No active intentions right now. Set yours and be the first signal someone sees.",color=PulseMuted,textAlign=TextAlign.Center,style=MaterialTheme.typography.bodyMedium)
+        TextButton(onCreate){Text("Create a Pulse",color=PulseAccent,fontWeight=FontWeight.Bold)}
+    }
+}
+
 private fun remainingLabel(expiry:String,now:Long,offset:Long):String{val seconds=pulseRemainingSeconds(expiry,now,offset);return when{seconds<=0->"Expired";seconds<=60->"<1 min left";else->"${(seconds+59)/60}m left"}}
-@Composable private fun PulseCard(p:PulseSummary,now:Long,offset:Long,onClick:()->Unit){Column(Modifier.fillMaxWidth().background(PulseSurface,RoundedCornerShape(18.dp)).border(1.dp,PulseAccent.copy(alpha=.24f),RoundedCornerShape(18.dp)).clickable(onClick=onClick).padding(15.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Row(verticalAlignment=Alignment.Top){Column(Modifier.weight(1f)){Text(p.displayName?:"Member",color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium);Text(p.primaryIntent.title,color=PulseAccent,fontWeight=FontWeight.SemiBold)};Text(remainingLabel(p.expiresAt,now,offset),color=PulseAccent,style=MaterialTheme.typography.labelSmall)};if(p.secondaryIntents.isNotEmpty())Text(p.secondaryIntents.joinToString(" · "){it.title},color=PulseMuted);p.message?.takeIf{it.isNotBlank()}?.let{Text(it,color=Color.White,maxLines=3)};Text("View and respond  ›",color=PulseAccent,fontWeight=FontWeight.SemiBold,modifier=Modifier.align(Alignment.End))}}
+@Composable private fun PulseCard(p:PulseSummary,now:Long,offset:Long,onClick:()->Unit){
+    val shape=RoundedCornerShape(22.dp)
+    Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF271930),Color(0xFF17121D))),shape).border(1.dp,Color.White.copy(alpha=.08f),shape).clickable(onClick=onClick).padding(15.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            PulseAvatar(p.displayName,p.photoUrl)
+            Column(Modifier.weight(1f)){Text(p.displayName?:"Member",color=Color.White,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium,maxLines=1);Text("IS OPEN TO",color=PulseMuted,style=MaterialTheme.typography.labelSmall)}
+            Surface(color=PulseAccent.copy(alpha=.12f),shape=RoundedCornerShape(50)){Row(Modifier.padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){Icon(Icons.Default.Schedule,null,tint=PulseAccent,modifier=Modifier.size(13.dp));Text(remainingLabel(p.expiresAt,now,offset),color=PulseAccent,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)}}
+        }
+        Text(p.primaryIntent.title,color=Color.White,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+        if(p.secondaryIntents.isNotEmpty())Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){p.secondaryIntents.forEach{PulseTag(it.title)}}
+        p.message?.takeIf{it.isNotBlank()}?.let{Text(it,Modifier.fillMaxWidth().background(Color.Black.copy(alpha=.18f),RoundedCornerShape(14.dp)).padding(12.dp),color=PulseMuted,maxLines=3)}
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text("Open Pulse",color=PulseAccent,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));Icon(Icons.Default.ArrowForward,null,tint=PulseAccent,modifier=Modifier.size(18.dp))}
+    }
+}
 
 private data class ComposerValues(val primary:PulseIntention=PulseIntention.RIGHT_NOW,val secondary:List<PulseIntention> = emptyList(),val message:String="",val visibility:PulseVisibility=PulseVisibility.GRID,val duration:Int=60)
 private val composerValuesSaver = listSaver<MutableState<ComposerValues>,String>(

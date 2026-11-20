@@ -8,4 +8,6 @@ Profile detail renders the backend's existing nullable `pulse` projection and ac
 
 The response API and UI use the normal direct-conversation Inbox route. Requested conversations are not accepted automatically. FCM remains on the existing `MESSAGE` notification route and deduplicates display by backend `notificationId`; realtime Inbox refresh behavior continues to use the app's existing lifecycle refresh.
 
+Pulse discovery/detail render the backend's nullable `photoUrl` from the member's first approved profile photo using the shared authenticated image loader. Initials remain the fallback when no approved photo exists. The backend change to return `photoUrl` must be deployed before production responses include it.
+
 The contract and backend implementation used for this integration are feature-branch sources. The production API origin was not probed or assumed to support Pulse. Backend migrations and deployment, authenticated-device integration, and push delivery remain separate verification steps.

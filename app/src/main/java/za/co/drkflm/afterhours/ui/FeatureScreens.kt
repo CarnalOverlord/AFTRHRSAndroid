@@ -179,7 +179,7 @@ private fun discoveryPath(radius:Int,filters:DiscoveryFilters,advanced:Boolean):
     val gridRevision = Presence.revision.intValue
     LaunchedEffect(gridRevision) { if(gridRevision>0 && !loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } }
     LaunchedEffect(Unit) { while(true) { delay(30_000); if(!loading) runCatching { items=ApiClient.request(discoveryPath(radius.toInt(),criteria,advanced)).jsonObject.array("items") } } }
-    if(pulseScreen){PulseScreen(vm,openPremium={pulseScreen=false},close={pulseScreen=false});return}
+    if(pulseScreen){PulseScreen(vm,openPremium={pulseScreen=false},close={pulseScreen=false},gridProfiles=items);return}
     selected?.let { ProfileScreen(vm,it.str("id")){selected=null}; return }
     Column(Modifier.fillMaxSize()) {
         PullToRefreshBox(isRefreshing=loading,onRefresh={load()},modifier=Modifier.weight(1f)) {
@@ -280,16 +280,6 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
         Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(43.dp).clip(CircleShape).background(Color(0xBB333039)).clickable(enabled=!liking){
             liking=true;scope.launch {try {ApiClient.request("likes/${p.str("id")}",if(liked)HttpMethod.Delete else HttpMethod.Post);liked=!liked}catch(_:Exception){}finally{liking=false}}
         },contentAlignment=Alignment.Center){Icon(if(liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,"Like ${p.str("displayName")}",tint=if(liked) Color(0xFFFF29B7) else Color.White,modifier=Modifier.size(26.dp))}
-        p.objectOrNull("pulse")?.let { pulse ->
-            val intention=PulseIntention.from(pulse.strOrNull("primaryIntent"))
-            val expiresAt=pulse.strOrNull("expiresAt")
-            if(intention!=null && expiresAt!=null && pulseRemainingSeconds(expiresAt,System.currentTimeMillis(),0L)>0) {
-                Row(Modifier.align(Alignment.TopStart).padding(start=9.dp,top=58.dp).clip(RoundedCornerShape(50)).background(Color(0xDD7010A8)).border(1.dp,Color(0xFFFF55D8),RoundedCornerShape(50)).padding(horizontal=9.dp,vertical=5.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                    Icon(Icons.Default.GraphicEq,"Active Pulse",tint=Color.White,modifier=Modifier.size(14.dp))
-                    Text("Pulse · ${intention.title}",color=Color.White,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                }
-            }
-        }
         val presenceState=p.strOrNull("presenceState") ?: if(p.bool("online")) "ONLINE" else "OFFLINE"
         if(presenceState=="ONLINE" || presenceState=="RECENT") Row(Modifier.align(Alignment.TopStart).padding(9.dp).background(Color(0xCC14221B),RoundedCornerShape(12.dp)).padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(8.dp).background(if(presenceState=="ONLINE")Color(0xFF43D17A)else Color(0xFFFFC66D),CircleShape));Text(if(presenceState=="ONLINE")"Online" else "Recently active",color=Color.White,style=MaterialTheme.typography.labelSmall)}
         Column(Modifier.matchParentSize().padding(9.dp)){
@@ -297,6 +287,16 @@ private fun positionGlyph(position:String)=when(position){"Top"->"↑";"Top / Ve
             Text("${p.str("displayName")}${p["age"]?.jsonPrimitive?.contentOrNull?.let{", $it"}.orEmpty()}",fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,color=Color.White,style=MaterialTheme.typography.titleMedium)
             p.strOrNull("distance").visibleProfileValue()?.let{Text(it,color=Color.White,style=MaterialTheme.typography.labelSmall,maxLines=1)}
             if(position!=null||status!=null)Row(Modifier.padding(top=5.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){position?.let{GridChip(it,positionGlyph(it))};status?.let{GridChip(it,if(it=="Cut")"✂" else "○")}}
+            p.objectOrNull("pulse")?.let { pulse ->
+                val intention=PulseIntention.from(pulse.strOrNull("primaryIntent"))
+                val expiresAt=pulse.strOrNull("expiresAt")
+                if(intention!=null && expiresAt!=null && pulseRemainingSeconds(expiresAt,System.currentTimeMillis(),0L)>0) {
+                    Row(Modifier.padding(top=5.dp).clip(RoundedCornerShape(50)).background(Color(0xDD7010A8)).border(1.dp,Color(0xFFFF55D8),RoundedCornerShape(50)).padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Default.GraphicEq,"Active Pulse",tint=Color.White,modifier=Modifier.size(13.dp))
+                        Text("Pulse · ${intention.title}",color=Color.White,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    }
+                }
+            }
         }
     }
 }
