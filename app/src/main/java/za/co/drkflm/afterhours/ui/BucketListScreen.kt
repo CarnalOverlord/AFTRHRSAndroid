@@ -58,7 +58,7 @@ fun BucketListProfileSection(userId: String, isOwnProfile: Boolean) {
 }
 
 @Composable
-fun BucketListEditorSection() {
+fun BucketListEditorSection(openPremium: () -> Unit) {
     var catalogue by remember { mutableStateOf<List<BucketEntry>>(emptyList()) }
     var selected by remember { mutableStateOf<List<BucketEntry>>(emptyList()) }
     var search by remember { mutableStateOf("") }
@@ -70,6 +70,7 @@ fun BucketListEditorSection() {
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
+    var premiumRequired by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(search, page, refresh) {
         busy = true
@@ -83,7 +84,11 @@ fun BucketListEditorSection() {
             hasMore = (pagination?.get("hasMore") as? JsonPrimitive)?.booleanOrNull == true
             maxItems = (data["maxItems"] as? JsonPrimitive)?.intOrNull ?: 10
             submissionsEnabled = (data["submissionsEnabled"] as? JsonPrimitive)?.booleanOrNull == true
+            premiumRequired = false
             message = null
+        } catch (e: ApiException) {
+            premiumRequired = e.status == 403 && e.code == "PREMIUM_REQUIRED"
+            message = if (premiumRequired) "Bucket List requires Premium." else (e.message ?: "Unable to load Bucket List")
         } catch (e: Exception) {
             message = e.message ?: "Unable to load Bucket List"
         } finally { busy = false }
@@ -91,11 +96,12 @@ fun BucketListEditorSection() {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Bucket List · Premium", color = Color(0xFFCF9CFF), fontWeight = FontWeight.Bold)
         Text("${selected.size} of $maxItems experiences selected", color = Color.White)
-        OutlinedTextField(search, { search = it; page = 1 }, label = { Text("Search experiences") }, modifier = Modifier.fillMaxWidth())
-        selected.forEach { item ->
+        if (premiumRequired) OutlinedButton(onClick = openPremium) { Text("Explore Premium") }
+        if (!premiumRequired) OutlinedTextField(search, { search = it; page = 1 }, label = { Text("Search experiences") }, modifier = Modifier.fillMaxWidth())
+        if (!premiumRequired) selected.forEach { item ->
             Text("✓ ${item.label}", color = Color(0xFFCF9CFF))
         }
-        catalogue.forEach { item ->
+        if (!premiumRequired) catalogue.forEach { item ->
             val chosen = selected.any { it.id == item.id }
             OutlinedButton(onClick = {
                 busy = true
@@ -107,16 +113,19 @@ fun BucketListEditorSection() {
                             if (chosen) null else buildJsonObject { put("itemId", item.id) }
                         )
                         refresh++
+                    } catch (e: ApiException) {
+                        premiumRequired = e.status == 403 && e.code == "PREMIUM_REQUIRED"
+                        message = if (premiumRequired) "Bucket List requires Premium." else (e.message ?: "Unable to update selection")
                     } catch (e: Exception) {
                         message = e.message ?: "Unable to update selection"
                     } finally { busy = false }
                 }
-            }, enabled = !busy && (chosen || selected.size < maxItems), modifier = Modifier.fillMaxWidth()) {
+            }, enabled = !busy && !premiumRequired && (chosen || selected.size < maxItems), modifier = Modifier.fillMaxWidth()) {
                 Text((if (chosen) "✓  " else "+  ") + item.label)
             }
         }
-        if (hasMore) TextButton(onClick = { page++ }, enabled = !busy) { Text("Load more") }
-        if (submissionsEnabled) {
+        if (hasMore && !premiumRequired) TextButton(onClick = { page++ }, enabled = !busy) { Text("Load more") }
+        if (submissionsEnabled && !premiumRequired) {
             OutlinedTextField(suggestion, { suggestion = it.take(120) }, label = { Text("Suggest an experience") }, modifier = Modifier.fillMaxWidth())
             OutlinedButton(onClick = {
                 busy = true
@@ -128,7 +137,8 @@ fun BucketListEditorSection() {
                             "Submitted for approval" else "Suggestion approved"
                         suggestion = ""
                         refresh++
-                    } catch (e: Exception) { message = e.message ?: "Suggestion failed" }
+                    } catch (e: ApiException) { premiumRequired = e.status == 403 && e.code == "PREMIUM_REQUIRED"; message = if (premiumRequired) "Bucket List requires Premium." else (e.message ?: "Suggestion failed") }
+                    catch (e: Exception) { message = e.message ?: "Suggestion failed" }
                     finally { busy = false }
                 }
             }, enabled = !busy && suggestion.trim().length in 3..120) { Text("Suggest for approval") }
