@@ -64,7 +64,7 @@ object ApiClient {
             this.method = method
             if (body != null) { contentType(ContentType.Application.Json); setBody(body) }
         }
-        return unwrap(response.status.value, response.body<String>(), response.headers["Retry-After"]?.toLongOrNull())
+        return unwrapPulseResponse(response.status.value, response.body<String>(), response.headers["Retry-After"]?.toLongOrNull())
     }
 
     suspend fun linkPreview(url: String): JsonObject? {
